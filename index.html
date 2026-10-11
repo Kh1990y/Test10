@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>StormGuard – Drainage Asset Manager</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css">
+<script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
+<style>
+  :root{--navh:calc(68px + env(safe-area-inset-bottom,0px));--rail:0px}
+  html,body{height:100%;margin:0;overflow:hidden;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#0f172a;-webkit-tap-highlight-color:transparent}
+  #app{position:fixed;inset:0;background:#f1f5f9;overflow:hidden}
+  .view{position:absolute;top:0;left:var(--rail);right:0;bottom:var(--navh);display:none;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .view.active{display:block}
+  .wrap{max-width:1000px;margin:0 auto;padding:16px}
+  #mapBox{position:absolute;inset:0;background:#e9eef3}
+  #map{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+  .mc{width:42px;height:42px;border-radius:12px;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.25);color:#1e293b;display:flex;align-items:center;justify-content:center}
+  .hidden{display:none!important}
+  .sheet{position:absolute;left:var(--rail);right:0;bottom:var(--navh);background:#fff;border-radius:24px 24px 0 0;box-shadow:0 -12px 40px rgba(15,23,42,.25);transform:translateY(120%);transition:transform .35s cubic-bezier(.2,.8,.2,1);z-index:1000;max-height:82%;overflow-y:auto}
+  .sheet.open{transform:none}
+  .overlay{position:absolute;inset:0;background:rgba(15,23,42,.65);z-index:2000;display:none;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto}
+  .overlay.open{display:flex}
+  .modal{width:100%;max-width:420px;margin:auto}
+  .nav{position:absolute;left:0;right:0;bottom:0;height:var(--navh);padding-bottom:env(safe-area-inset-bottom,0px);background:#fff;border-top:1px solid #e2e8f0;display:flex;z-index:1500}
+  .nav .brand{display:none}
+  .nav button{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:11px;color:#64748b;transition:.2s}
+  .nav button i{font-size:19px}
+  .nav button.active{color:#1d4ed8;font-weight:600}
+  @media (min-width:768px){
+    :root{--navh:0px;--rail:88px}
+    .nav{top:0;right:auto;width:88px;height:auto;padding:12px 0;border-top:0;border-right:1px solid #e2e8f0;flex-direction:column;justify-content:flex-start;gap:6px}
+    .nav .brand{display:flex;width:44px;height:44px;margin:0 auto 12px;border-radius:14px;background:#1e3a8a;color:#fff;align-items:center;justify-content:center;font-size:18px}
+    .nav button{flex:none;height:72px;margin:0 8px;border-radius:14px}
+    .nav button.active{background:#eff6ff}
+    .sheet{left:auto;top:0;bottom:0;width:410px;max-height:none;border-radius:24px 0 0 24px;transform:translateX(110%);box-shadow:-12px 0 40px rgba(15,23,42,.25)}
+    .sheet.open{transform:none}
+  }
+  .spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+  .pulse-ring{animation:pr 1.6s ease-out infinite}@keyframes pr{0%{box-shadow:0 0 0 0 rgba(37,99,235,.5)}100%{box-shadow:0 0 0 22px rgba(37,99,235,0)}}
+  .pin{width:34px;height:34px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);display:flex;align-items:center;justify-content:center;border:3px solid #fff;box-shadow:0 4px 10px rgba(0,0,0,.35)}
+  .pin i{transform:rotate(45deg);color:#fff;font-size:13px}
+  .fade{animation:fd .3s ease}@keyframes fd{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  #toast{position:absolute;top:16px;left:50%;transform:translate(-50%,-140px);background:#0f172a;color:#fff;padding:10px 18px;border-radius:14px;font-size:13px;z-index:3000;transition:.4s;box-shadow:0 8px 24px rgba(0,0,0,.3);max-width:92vw;text-align:center}
+  #toast.show{transform:translate(-50%,0)}
+  .gbar{height:22px;border-radius:6px;background:#3b82f6;position:absolute;top:4px}
+  input[type=text]{font-size:16px}
+  input:focus{outline:none;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="toast"></div>
+  <input type="file" id="csvIn" accept=".csv,.txt,text/csv,text/plain" class="hidden">
+
+  <section id="v-map" class="view active" style="overflow:hidden">
+    <div id="mapBox"><canvas id="map"></canvas><div id="attr" class="absolute right-1 bottom-0 text-[9px] text-slate-500 bg-white/70 px-1 rounded"></div></div>
+    <div class="absolute left-3 bottom-4 z-[900] flex flex-col gap-2">
+      <button class="mc" onclick="zoomBtn(1)" aria-label="Zoom in"><i class="fa-solid fa-plus"></i></button>
+      <button class="mc" onclick="zoomBtn(-1)" aria-label="Zoom out"><i class="fa-solid fa-minus"></i></button>
+      <button class="mc" onclick="fitAll()" aria-label="Fit all"><i class="fa-solid fa-expand"></i></button>
+      <button class="mc" style="color:#1d4ed8" onclick="locateMe()" aria-label="My location"><i class="fa-solid fa-location-crosshairs"></i></button>
+    </div>
+    <div class="absolute top-3 left-3 right-3 md:right-auto md:w-[460px] z-[900] bg-white/95 backdrop-blur rounded-2xl shadow-lg px-3 py-3 flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl bg-blue-900 text-white flex items-center justify-center md:hidden shrink-0"><i class="fa-solid fa-droplet"></i></div>
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-bold text-slate-800 leading-tight truncate">Riyadh Storm Network – Phase 2[span_3](start_span)[span_3](end_span)</div>
+        <div class="text-[11px] text-slate-500 truncate"><span id="cnt">0</span> assets · <span id="gps" onclick="startGPS()" class="font-semibold cursor-pointer">GPS…</span></div>
+      </div>
+      <button onclick="$('csvIn').click()" class="text-xs px-3 py-2 rounded-xl bg-blue-800 text-white font-semibold whitespace-nowrap"><i class="fa-solid fa-file-csv mr-1"></i>Import CSV</button>
+    </div>
+    <div id="offBadge" class="hidden absolute top-[78px] left-3 z-[900] text-[10px] bg-amber-100 text-amber-800 px-2 py-1 rounded-full font-semibold">Universal Coordinate Engine</div>
+    <div class="absolute right-3 bottom-4 md:right-auto md:left-16 z-[900] flex flex-col gap-1.5" id="legend"></div>
+  </section>
+
+  <section id="v-tasks" class="view"><div class="wrap">
+    <h2 class="text-xl font-bold text-slate-800 mb-1">Task List</h2>
+    <p class="text-sm text-slate-500 mb-4">Submitted inspections & maintenance</p>
+    <div id="taskList" class="grid gap-3 md:grid-cols-2"></div>
+  </div></section>
+
+  <section id="v-gantt" class="view"><div class="wrap">
+    <h2 class="text-xl font-bold text-slate-800 mb-1">Project Schedule</h2>
+    <p class="text-sm text-slate-500 mb-3">Parsed locally from CSV – no cloud reads[span_4](start_span)[span_4](end_span)</p>
+    <div class="flex gap-2 mb-3" id="modes"></div>
+    <div id="ganttHost" class="bg-white rounded-2xl shadow overflow-auto"></div>
+  </div></section>
+
+  <section id="v-settings" class="view"><div class="wrap">
+    <h2 class="text-xl font-bold text-slate-800 mb-4">Settings</h2>
+    <div class="bg-white rounded-2xl shadow p-4 mb-4">
+      <div class="font-bold text-slate-800 mb-1">Location</div>
+      <p class="text-xs text-slate-500 mb-3">Real GPS is enforced: actions are blocked when you are more than 10 m from the asset[span_5](start_span)[span_5](end_span). Demo GPS only previews the flow away from the site.</p>
+      <label class="flex items-center justify-between text-sm mb-3"><span>Demo GPS (simulate 7 m from selected asset)</span><input type="checkbox" id="demo" class="w-5 h-5" onchange="state.demo=this.checked;gpsChip();draw()"></label>
+      <button onclick="relocateSample()" class="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold"><i class="fa-solid fa-location-dot mr-1"></i>Place sample assets around me</button>
+    </div>
+    <div class="bg-white rounded-2xl shadow p-4 mb-4">
+      <div class="font-bold text-slate-800 mb-1">Asset Data (CSV)</div>
+      <p class="text-xs text-slate-500 mb-3">Supports any coordinate system (Lat/Lng or Projected/Cartesian meters). Columns: Asset ID, X Coordinate, Y Coordinate, Invert Level, Ground Level, Size, Type, Number of Covers (Grill), Shape, Dimensions (Line)[span_6](start_span)[span_6](end_span).</p>
+      <div class="flex flex-wrap gap-2">
+        <button onclick="$('csvIn').click()" class="px-4 py-2 rounded-xl bg-blue-800 text-white text-sm font-semibold"><i class="fa-solid fa-upload mr-1"></i>Upload CSV</button>
+        <button onclick="downloadTemplate()" class="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold"><i class="fa-solid fa-download mr-1"></i>Template</button>
+        <button onclick="resetSample()" class="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold"><i class="fa-solid fa-rotate-left mr-1"></i>Reset sample</button>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl shadow divide-y divide-slate-100">
+      <div class="p-4 flex justify-between text-sm"><span class="text-slate-500">Project Name</span><b>Riyadh Storm Network[span_7](start_span)[span_7](end_span)</b></div>
+      <div class="p-4 flex justify-between text-sm"><span class="text-slate-500">Project Number</span><b>SW-2026-014[span_8](start_span)[span_8](end_span)</b></div>
+      <div class="p-4 flex justify-between text-sm"><span class="text-slate-500">Geofence radius</span><b>≤ 10 m[span_9](start_span)[span_9](end_span)</b></div>
+      <div class="p-4 flex justify-between text-sm"><span class="text-slate-500">Gallery uploads</span><b class="text-rose-600">Disabled[span_10](start_span)[span_10](end_span)</b></div>
+      <div class="p-4 flex justify-between text-sm"><span class="text-slate-500">Watermark</span><b class="text-emerald-600">Enforced[span_11](start_span)[span_11](end_span)</b></div>
+    </div>
+    <p class="text-xs text-slate-400 mt-4 text-center">Prototype v1.3 · Universal CRS & Geofence</p>
+  </div></section>
+
+  <div id="sheet" class="sheet"></div>
+
+  <div id="imp" class="overlay"><div id="impBox" class="modal bg-white rounded-3xl p-4 shadow-2xl" style="max-width:780px"></div></div>
+
+  <div id="camera" class="overlay">
+    <div class="modal bg-slate-900 rounded-3xl overflow-hidden shadow-2xl">
+      <div class="flex justify-between items-center px-4 py-3 text-white">
+        <span class="text-sm font-semibold" id="camTitle">Camera</span>
+        <button onclick="closeCam()" class="w-9 h-9 rounded-full bg-white/10"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="relative bg-gradient-to-br from-slate-700 to-slate-800 aspect-[4/3] flex flex-col items-center justify-center text-slate-300">
+        <i class="fa-solid fa-camera text-5xl mb-2"></i>
+        <span class="text-xs">Live camera preview (simulated)[span_12](start_span)[span_12](end_span)</span>
+        <div class="absolute inset-4 border border-white/30 rounded-lg"></div>
+        <span class="absolute top-6 left-6 text-[10px] bg-rose-600 text-white px-2 py-0.5 rounded-full">LIVE ONLY</span>
+      </div>
+      <div class="p-4 flex items-center justify-center gap-6">
+        <span class="text-[11px] text-slate-400 w-20 text-center"><i class="fa-solid fa-ban mr-1"></i>No gallery</span>
+        <button onclick="capture()" aria-label="Capture" class="w-16 h-16 rounded-full bg-white border-4 border-slate-400 active:scale-90 transition"></button>
+        <span class="w-20"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="preview" class="overlay">
+    <div class="modal bg-white rounded-3xl p-4 shadow-2xl fade">
+      <h3 class="font-bold text-slate-800 mb-2">Captured Photo</h3>
+      <canvas id="canvas" width="800" height="600" class="w-full rounded-xl border border-slate-200"></canvas>
+      <p class="text-[11px] text-slate-500 mt-2"><i class="fa-solid fa-lock text-emerald-600 mr-1"></i>Watermark is permanently burned into the image[span_13](start_span)[span_13](end_span).</p>
+      <div class="flex gap-2 mt-3">
+        <button onclick="retake()" class="flex-1 py-3 rounded-xl bg-slate-100 text-slate-700 font-semibold text-sm">Retake</button>
+        <button onclick="savePhoto()" class="flex-1 py-3 rounded-xl bg-blue-700 text-white font-semibold text-sm">Save Photo</button>
+      </div>
+    </div>
+  </div>
+
+  <nav class="nav" id="nav"></nav>
+</div>
+
+<script>
+const PROJECT={name:"Riyadh Storm Network",number:"SW-2026-014"};
+const TYPES={
+  "Manhole":{color:"#1e40af",icon:"fa-circle-dot"},
+  "Catch Basin":{color:"#0e7490",icon:"fa-fill-drip"},
+  "Grill":{color:"#b45309",icon:"fa-table-cells"},
+  "Open Channel":{color:"#047857",icon:"fa-water"},
+  "Closed Channel":{color:"#6d28d9",icon:"fa-grip-lines"},
+  "Line":{color:"#be123c",icon:"fa-minus"}
+};
+const typeStyle=t=>TYPES[t]||{color:"#475569",icon:"fa-location-dot"};
+const SAMPLE=[
+  {id:"MH-0012",type:"Manhole",x:46.6753,y:24.7136,invert:612.35,ground:614.10,size:"1200 mm"},
+  {id:"CB-0045",type:"Catch Basin",x:46.6769,y:24.7144,invert:612.80,ground:613.95,size:"600×600 mm"},
+  {id:"GR-0107",type:"Grill",x:46.6741,y:24.7148,invert:613.05,ground:613.90,size:"900 mm",covers:3},
+  {id:"OC-0003",type:"Open Channel",x:46.6780,y:24.7128,invert:611.90,ground:613.40,size:"2.0 m wide"},
+  {id:"CC-0021",type:"Closed Channel",x:46.6730,y:24.7129,invert:611.60,ground:613.70,size:"1500×1000 mm"},
+  {id:"LN-0088",type:"Line",x:46.6760,y:24.7120,invert:611.75,ground:613.55,size:"DN 900",shape:"Circular",dims:"Ø 900 mm"}
+];
+const CSV=`id,name,start,end,progress,dependencies
+1,Site Survey,2026-10-01,2026-10-10,100,
+2,Manhole Inspections,2026-10-08,2026-10-25,70,1
+3,Catch Basin Cleaning,2026-10-20,2026-11-10,40,2
+4,Grill Replacement,2026-11-05,2026-11-20,15,3
+5,Channel Desilting,2026-11-12,2026-12-05,0,3
+6,Line CCTV Survey,2026-11-25,2026-12-18,0,4
+7,Final Report,2026-12-15,2026-12-30,0,5;6`;
+const TEMPLATE="Asset ID,X Coordinate,Y Coordinate,Invert Level,Ground Level,Size,Type,Number of Covers,Shape,Dimensions\nGR-0107,46.6741,24.7148,613.05,613.90,900 mm,Grill,3,,\nMH-0012,46.6753,24.7136,612.35,614.10,1200 mm,Manhole,,,\nLN-0088,46.6760,24.7120,611.75,613.55,DN 900,Line,,Circular,Ø 900 mm\n";
+
+/*PURE-START*/
+const FIELDS=[["id","Asset ID",0],["x","X Coordinate (Lon/Easting)",1],["y","Y Coordinate (Lat/Northing)",1],["invert","Invert Level",1],["ground","Ground Level",1],["size","Size",0],["type","Type",0],["covers","Number of Covers",1],["shape","Shape",0],["dims","Dimensions",0]];
+function detectDelim(t){const f=String(t).replace(/^\uFEFF/,"").split(/\r?\n/)[0]||"";return[",",";","\t"].map(d=>[d,f.split(d).length]).sort((a,b)=>b[1]-a[1])[0][0];}
+function splitCSV(text,delim){
+  text=String(text).replace(/^\uFEFF/,"");delim=delim||detectDelim(text);
+  const rows=[];let row=[],f="",q=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(q){if(ch==='"'){if(text[i+1]==='"'){f+='"';i++;}else q=false;}else f+=ch;}
+    else if(ch==='"')q=true;
+    else if(ch===delim){row.push(f);f="";}
+    else if(ch==="\n"||ch==="\r"){if(ch==="\r"&&text[i+1]==="\n")i++;row.push(f);f="";if(row.some(c=>c.trim()!==""))rows.push(row);row=[];}
+    else f+=ch;
+  }
+  row.push(f);if(row.some(c=>c.trim()!==""))rows.push(row);
+  return rows;
+}
+function num(s){
+  if(s==null)return NaN;
+  s=String(s).replace(/[٠-٩]/g,d=>d.charCodeAt(0)-1632).replace(/٫/g,".").replace(",",".").trim();
+  return s===""?NaN:parseFloat(s);
+}
+function normType(t){
+  const s=String(t||"").trim(),l=s.toLowerCase();
+  if(/catch|بالوع/.test(l))return"Catch Basin";
+  if(/manhole|منهول|مانهول/.test(l))return"Manhole";
+  if(/grill|grate|شبك|مصفا/.test(l))return"Grill";
+  if(/open/.test(l)&&/channel/.test(l)||/قناة مفتوحة|مفتوح/.test(l))return"Open Channel";
+  if(/closed|box|culvert/.test(l)&&/channel|culvert/.test(l)||/قناة مغلقة|مغلق/.test(l))return"Closed Channel";
+  if(/line|pipe|خط|ماسورة/.test(l))return"Line";
+  return s||"Asset";
+}
+const ALIAS={id:["assetid","id","asset","name","رقمالاصل","رقمالأصل"],x:["xcoordinate","x","lon","lng","long","longitude","easting"],y:["ycoordinate","y","lat","latitude","northing"],
+  invert:["invertlevel","invert","il"],ground:["groundlevel","ground","gl"],size:["size","المقاس"],type:["type","assettype","النوع"],
+  covers:["numberofcovers","covers","numcovers","noofcovers"],shape:["shape","الشكل"],dims:["dimensions","dimension","dims"]};
+function guessMap(heads){const hk=heads.map(h=>h.toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]/g,""));const m={};for(const k in ALIAS){const i=hk.findIndex(h=>ALIAS[k].includes(h));if(i>=0)m[k]=i;}return m;}
+function colKind(rows,i){const v=rows.slice(0,80).map(r=>String(r[i]==null?"":r[i]).trim()).filter(Boolean);return!v.length?"Empty":v.every(s=>isFinite(num(s)))?"Number":"Text";}
+function buildAssets(rows,map,o){
+  const assets=[],bad=[],seen={};let dup=0;
+  rows.forEach((r,i)=>{
+    const g=k=>map[k]==null?"":String(r[map[k]]==null?"":r[map[k]]).trim();
+    const x=num(g("x")),y=num(g("y"));
+    if(!isFinite(x)||!isFinite(y)){bad.push({n:i+1,why:"X/Y is not a number"});return;}
+    // Universal coordinates support: accepts any numeric X and Y system (Lat/Lng or Projected UTM/Meters)[span_14](start_span)[span_14](end_span)
+    const type=o.typeMode==="fixed"?(String(o.fixedType||"").trim()||"Asset"):normType(g("type"));
+    const pre=type.split(/\s+/).map(w=>w[0]).join("").toUpperCase().slice(0,3);
+    const a={id:g("id")||pre+"-"+String(i+1).padStart(4,"0"),type,x,y,invert:num(g("invert")),ground:num(g("ground")),size:g("size")||"—"};
+    const c=num(g("covers"));if(isFinite(c))a.covers=c;
+    if(g("shape"))a.shape=g("shape");if(g("dims"))a.dims=g("dims");
+    if(seen[a.id])dup++;seen[a.id]=1;assets.push(a);
+  });
+  return{assets,bad,dup};
+}
+function hav(la1,lo1,la2,lo2){
+  const R=6371008.8,r=Math.PI/180,a=Math.sin((la2-la1)*r/2)**2+Math.cos(la1*r)*Math.cos(la2*r)*Math.sin((lo2-lo1)*r/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+function calcDist(x1,y1,x2,y2,isGeo){
+  if(isGeo) return hav(y1,x1,y2,x2);
+  return Math.hypot(x2-x1, y2-y1);
+}
+/*PURE-END*/
+const state={demo:false,sample:true,geo:"idle",tab:"map",asset:null,action:null,verified:false,dist:7,name:"",photos:{before:[],after:[]},slot:null,tasks:[],assets:[]};
+let ganttMode="Week";
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt=(v,d=2)=>isFinite(v)?v.toFixed(d)+" m":"—";
+function toast(m){const t=$("toast");t.textContent=m;t.classList.add("show");clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove("show"),3000);}
+
+/* NAV */
+const NAV=[["map","fa-map-location-dot","Map View"],["tasks","fa-list-check","Task List"],["gantt","fa-chart-gantt","Gantt"],["settings","fa-gear","Settings"]];
+$("nav").innerHTML='<div class="brand"><i class="fa-solid fa-droplet"></i></div>'+NAV.map(n=>`<button data-t="${n[0]}" onclick="go('${n[0]}')"><i class="fa-solid ${n[1]}"></i>${n[2]}</button>`).join("");
+function go(t){
+  state.tab=t;
+  document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.id==="v-"+t));
+  document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("active",b.dataset.t===t));
+  if(t!=="map") closeSheet();
+  if(t==="map") setTimeout(resizeMap,60);
+  if(t==="gantt") renderGantt();
+  if(t==="tasks") renderTasks();
+}
+
+/* MAP ENGINE (Universal CRS Support for both Lat/Lng and Projected coordinates) */
+const GEOFENCE=10;
+const MP={lat:24.7134,lng:46.6755,z:17,W:0,H:0,dpr:1,sel:null,raf:0,tiles:new Map(),imgs:new Map(),src:0,fail:0,ok:0,hits:[],isGeo:true,pMinX:0,pMaxX:1,pMinY:0,pMaxY:1};
+const cv=$("map"),cx=cv.getContext("2d"),clampLat=v=>Math.max(-84,Math.min(84,v)),clampZ=v=>Math.max(3,Math.min(20,v));
+const proj=(lat,lng,z)=>{const s=256*2**z,r=Math.sin(lat*Math.PI/180);return{x:(lng+180)/360*s,y:(0.5-Math.log((1+r)/(1-r))/(4*Math.PI))*s};};
+const unproj=(x,y,z)=>{const s=256*2**z,n=Math.PI-2*Math.PI*y/s;return{lat:180/Math.PI*Math.atan(Math.sinh(n)),lng:x/s*360-180};};
+
+function checkIsGeo(){
+  if(!state.assets.length) return true;
+  return state.assets.every(a=>Math.abs(a.y)<=90 && Math.abs(a.x)<=180);
+}
+
+function updateCRSBounds(){
+  MP.isGeo=checkIsGeo();
+  if(!MP.isGeo && state.assets.length){
+    const xs=state.assets.map(a=>a.x), ys=state.assets.map(a=>a.y);
+    MP.pMinX=Math.min(...xs); MP.pMaxX=Math.max(...xs);
+    MP.pMinY=Math.min(...ys); MP.pMaxY=Math.max(...ys);
+    if(MP.pMinX===MP.pMaxX) MP.pMaxX+=100;
+    if(MP.pMinY===MP.pMaxY) MP.pMaxY+=100;
+  }
+}
+
+function toScreen(lat,lng){
+  if(MP.isGeo){
+    const c=proj(MP.lat,MP.lng,MP.z),p=proj(lat,lng,MP.z);
+    return{x:p.x-c.x+MP.W/2,y:p.y-c.y+MP.H/2};
+  } else {
+    // Projected / Cartesian coordinate mapping
+    const scaleX = (MP.W - 120) / (MP.pMaxX - MP.pMinX || 1);
+    const scaleY = (MP.H - 120) / (MP.pMaxY - MP.pMinY || 1);
+    const scale = Math.min(scaleX, scaleY) * Math.pow(1.2, MP.z - 17);
+    const cx = (MP.pMinX + MP.pMaxX) / 2 + MP.lng;
+    const cy = (MP.pMinY + MP.pMaxY) / 2 + MP.lat;
+    return {
+      x: MP.W / 2 + (lng - cx) * scale,
+      y: MP.H / 2 - (lat - cy) * scale // invert Y for screen space
+    };
+  }
+}
+
+function toLL(sx,sy){
+  if(MP.isGeo){
+    const c=proj(MP.lat,MP.lng,MP.z);
+    return unproj(c.x+sx-MP.W/2,c.y+sy-MP.H/2,MP.z);
+  } else {
+    const scaleX = (MP.W - 120) / (MP.pMaxX - MP.pMinX || 1);
+    const scaleY = (MP.H - 120) / (MP.pMaxY - MP.pMinY || 1);
+    const scale = Math.min(scaleX, scaleY) * Math.pow(1.2, MP.z - 17);
+    const cx = (MP.pMinX + MP.pMaxX) / 2 + MP.lng;
+    const cy = (MP.pMinY + MP.pMaxY) / 2 + MP.lat;
+    return {
+      lat: cy - (sy - MP.H / 2) / scale,
+      lng: cx + (sx - MP.W / 2) / scale
+    };
+  }
+}
+
+function setView(lat,lng,z){MP.lat=MP.isGeo?clampLat(lat):lat;MP.lng=lng;if(z!=null)MP.z=clampZ(z);draw();}
+function zoomAt(sx,sy,nz){nz=clampZ(nz);const ll=toLL(sx,sy);MP.z=nz;setView(ll.lat,ll.lng,nz);}
+function panBy(dx,dy){
+  if(MP.isGeo){
+    const c=proj(MP.lat,MP.lng,MP.z),n=unproj(c.x-dx,c.y-dy,MP.z);
+    MP.lat=clampLat(n.lat);MP.lng=n.lng;
+  } else {
+    MP.lng -= dx / Math.pow(1.2, MP.z - 17);
+    MP.lat += dy / Math.pow(1.2, MP.z - 17);
+  }
+  draw();
+}
+function zoomBtn(d){zoomAt(MP.W/2,MP.H/2,Math.round(MP.z)+d);}
+function fitAll(){
+  const L=state.assets;if(!L.length||!MP.W)return;
+  updateCRSBounds();
+  const la=L.map(a=>a.y),lo=L.map(a=>a.x),mnA=Math.min(...la),mxA=Math.max(...la),mnO=Math.min(...lo),mxO=Math.max(...lo);
+  if(MP.isGeo){
+    let z=18;
+    if(mnA!==mxA||mnO!==mxO)for(z=19;z>3;z--){const a=proj(mxA,mnO,z),b=proj(mnA,mxO,z);if(b.x-a.x<=MP.W-120&&b.y-a.y<=MP.H-220)break;}
+    setView((mnA+mxA)/2,(mnO+mxO)/2,z);
+  } else {
+    MP.lng = 0; MP.lat = 0; MP.z = 17;
+    draw();
+  }
+}
+function locateMe(){const p=curPos(state.asset);if(!p){toast("Location unavailable – tap the GPS label to retry");startGPS();return;}setView(p.lat,p.lng,Math.max(MP.z,18));}
+function resizeMap(){const r=$("mapBox").getBoundingClientRect();if(!r.width||!r.height)return;MP.W=r.width;MP.H=r.height;MP.dpr=Math.min(window.devicePixelRatio||1,3);cv.width=Math.round(r.width*MP.dpr);cv.height=Math.round(r.height*MP.dpr);draw();}
+const SRC=[(z,x,y,r)=>`https://${"abcd"[(x+y)%4]}.basemaps.cartocdn.com/rastertiles/voyager/${z}/${x}/${y}${r}.png`,(z,x,y)=>`https://${"abc"[(x+y)%3]}.tile.openstreetmap.org/${z}/${x}/${y}.png`,(z,x,y)=>`https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${z}/${y}/${x}`];
+function badge(off){$("offBadge").classList.toggle("hidden",!off);$("attr").textContent=MP.ok&&MP.isGeo?"© OpenStreetMap · © CARTO · © Esri":"Universal Coordinate / Schematic Basemap";}
+function offTile(z,x,y){
+  const k=z+"/"+x+"/"+y;let t=MP.tiles.get(k);if(t)return t;
+  if(MP.tiles.size>400)MP.tiles.clear();
+  t=document.createElement("canvas");t.width=t.height=256;
+  const g=t.getContext("2d"),ox=x*256,oy=y*256,C=128,m=v=>((v%4)+4)%4;
+  g.fillStyle="#fff";g.fillRect(0,0,256,256);
+  for(let i=Math.floor(ox/C);i<=Math.floor((ox+255)/C);i++)for(let j=Math.floor(oy/C);j<=Math.floor((oy+255)/C);j++){
+    const r=((Math.imul(i,374761393)^Math.imul(j,668265263))>>>0)/4294967295,px=i*C-ox,py=j*C-oy;
+    g.fillStyle=r<.12?"#cfe6c9":r<.2?"#d3e3f1":"#eef0f3";g.fillRect(px+9,py+9,C-18,C-18);
+  }
+  MP.tiles.set(k,t);return t;
+}
+function onTile(z,x,y){
+  if(!MP.isGeo) return null;
+  const k=MP.src+"/"+z+"/"+x+"/"+y;let e=MP.imgs.get(k);if(e)return e.ok?e.img:null;
+  if(MP.imgs.size>700)MP.imgs.clear();
+  const img=new Image();e={img,ok:false};MP.imgs.set(k,e);
+  img.onload=()=>{e.ok=true;MP.ok++;badge(false);draw();};
+  img.onerror=()=>{if(++MP.fail===6&&MP.ok===0){if(MP.src<SRC.length-1){MP.src++;MP.fail=0;draw();}else badge(true);}};
+  img.src=SRC[MP.src](z,x,y,MP.dpr>1.5?"@2x":"");return null;
+}
+function pin(x,y,col,sel){
+  const r=sel?15:12,cy=y-r-8;cx.save();cx.shadowColor="rgba(0,0,0,.35)";cx.shadowBlur=6;cx.shadowOffsetY=2;
+  cx.beginPath();cx.arc(x,cy,r,Math.PI*.82,Math.PI*2.18);cx.lineTo(x,y);cx.closePath();cx.fillStyle=col;cx.fill();
+  cx.shadowColor="transparent";cx.lineWidth=2.5;cx.strokeStyle="#fff";cx.stroke();
+  cx.beginPath();cx.arc(x,cy,r*.38,0,7);cx.fillStyle="#fff";cx.fill();cx.restore();
+}
+function render(){
+  const W=MP.W,H=MP.H;if(!W||!H)return;
+  cx.setTransform(MP.dpr,0,0,MP.dpr,0,0);cx.fillStyle="#e9eef3";cx.fillRect(0,0,W,H);
+  
+  if(MP.isGeo){
+    const Z=Math.max(1,Math.min(19,Math.round(MP.z))),s=2**(MP.z-Z),c=proj(MP.lat,MP.lng,Z),n=2**Z,ts=256*s+.6;
+    for(let ty=Math.floor((c.y-H/2/s)/256);ty<=Math.floor((c.y+H/2/s)/256);ty++){
+      if(ty<0||ty>=n)continue;
+      for(let tx=Math.floor((c.x-W/2/s)/256);tx<=Math.floor((c.x+W/2/s)/256);tx++){
+        const w=((tx%n)+n)%n,sx=(tx*256-c.x)*s+W/2,sy=(ty*256-c.y)*s+H/2;
+        cx.drawImage(offTile(Z,w,ty),sx,sy,ts,ts);const im=onTile(Z,w,ty);if(im)cx.drawImage(im,sx,sy,ts,ts);
+      }
+    }
+  } else {
+    // Render grid for Projected / Custom CRS
+    cx.strokeStyle = "#cbd5e1"; cx.lineWidth = 1;
+    const step = 80;
+    for(let x = 0; x < W; x += step){ cx.beginPath(); cx.moveTo(x, 0); cx.lineTo(x, H); cx.stroke(); }
+    for(let y = 0; y < H; y += step){ cx.beginPath(); cx.moveTo(0, y); cx.lineTo(W, y); cx.stroke(); }
+  }
+
+  const mpp=MP.isGeo ? 40075016.686*Math.cos(MP.lat*Math.PI/180)/(256*2**MP.z) : 1;
+  if(MP.sel){const p=toScreen(MP.sel.y,MP.sel.x);cx.beginPath();cx.arc(p.x,p.y,GEOFENCE/mpp,0,7);cx.fillStyle="rgba(37,99,235,.12)";cx.fill();cx.setLineDash([6,5]);cx.strokeStyle="#2563eb";cx.lineWidth=1.5;cx.stroke();cx.setLineDash([]);}
+  
+  const me=curPos(MP.sel);
+  if(me){const p=toScreen(me.lat,me.lng),r=(me.acc||0)/mpp;if(r>10){cx.beginPath();cx.arc(p.x,p.y,r,0,7);cx.fillStyle="rgba(59,130,246,.10)";cx.fill();}
+    cx.beginPath();cx.arc(p.x,p.y,9,0,7);cx.fillStyle="#fff";cx.fill();cx.beginPath();cx.arc(p.x,p.y,6,0,7);cx.fillStyle="#2563eb";cx.fill();}
+  
+  MP.hits=[];const vis=[],lab=MP.z>=16.5&&state.assets.length<=200;
+  state.assets.forEach(a=>{const p=toScreen(a.y,a.x);if(p.x>-50&&p.x<W+50&&p.y>-70&&p.y<H+50)vis.push([a,p]);});
+  vis.sort((u,v)=>(u[0]===MP.sel)-(v[0]===MP.sel));
+  vis.forEach(([a,p])=>{
+    pin(p.x,p.y,typeStyle(a.type).color,a===MP.sel);MP.hits.push({a,x:p.x,y:p.y-20});
+    if(lab){cx.font="bold 10px Arial";cx.textAlign="center";cx.lineWidth=3;cx.strokeStyle="#fff";cx.strokeText(a.id,p.x,p.y+12);cx.fillStyle="#0f172a";cx.fillText(a.id,p.x,p.y+12);}
+  });
+}
+function draw(){if(MP.raf)return;MP.raf=requestAnimationFrame(()=>{MP.raf=0;render();});}
+function tap(x,y){
+  let best=null,bd=28;
+  for(let i=MP.hits.length-1;i>=0;i--){const h=MP.hits[i],d=Math.hypot(h.x-x,h.y-y);if(d<bd){bd=d;best=h.a;}}
+  if(best)openAsset(best);
+}
+function initMap(){
+  const ptrs=new Map();let drag=null,pinch=0;
+  const pd=()=>{const v=[...ptrs.values()];return{d:Math.hypot(v[0].x-v[1].x,v[0].y-v[1].y),x:(v[0].x+v[1].x)/2,y:(v[0].y+v[1].y)/2};};
+  cv.addEventListener("pointerdown",e=>{try{cv.setPointerCapture(e.pointerId);}catch(_){}ptrs.set(e.pointerId,{x:e.offsetX,y:e.offsetY});drag={x:e.offsetX,y:e.offsetY,moved:0};if(ptrs.size===2){pinch=pd().d;drag=null;}});
+  cv.addEventListener("pointermove",e=>{
+    if(!ptrs.has(e.pointerId))return;ptrs.set(e.pointerId,{x:e.offsetX,y:e.offsetY});
+    if(ptrs.size===2&&pinch){const p=pd();zoomAt(p.x,p.y,MP.z+Math.log2(p.d/pinch));pinch=p.d;}
+    else if(drag){const dx=e.offsetX-drag.x,dy=e.offsetY-drag.y;drag.moved+=Math.abs(dx)+Math.abs(dy);drag.x=e.offsetX;drag.y=e.offsetY;panBy(dx,dy);}
+  });
+  const up=e=>{if(drag&&e.type==="pointerup"&&drag.moved<8)tap(e.offsetX,e.offsetY);ptrs.delete(e.pointerId);if(ptrs.size<2)pinch=0;drag=null;};
+  cv.addEventListener("pointerup",up);cv.addEventListener("pointercancel",up);
+  cv.addEventListener("wheel",e=>{e.preventDefault();zoomAt(e.offsetX,e.offsetY,MP.z-e.deltaY*(e.ctrlKey?.01:.0015));},{passive:false});
+  cv.addEventListener("dblclick",e=>zoomAt(e.offsetX,e.offsetY,MP.z+1));
+  new ResizeObserver(resizeMap).observe($("mapBox"));window.addEventListener("resize",resizeMap);
+  resizeMap();badge(false);
+}
+function setAssets(list,fit){
+  state.assets=list;closeSheet();$("cnt").textContent=list.length;
+  updateCRSBounds();
+  $("legend").innerHTML=[...new Set(list.map(a=>a.type))].map(k=>`<div class="bg-white/95 rounded-full shadow px-2.5 py-1 text-[10px] font-semibold text-slate-600 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full" style="background:${typeStyle(k).color}"></span>${esc(k)}</div>`).join("");
+  if(fit)fitAll();draw();
+}
+
+/* GPS + GEOFENCE (Strictly prompts permission and checks ≤ 10m)[span_15](start_span)[span_15](end_span) */
+const geo={me:null,acc:null,status:"init",id:null};
+function curPos(a){if(state.demo&&a)return{lat:a.y+(MP.isGeo?7/111320:7),lng:a.x,acc:5};return geo.me?{lat:geo.me.lat,lng:geo.me.lng,acc:geo.acc}:null;}
+function gpsChip(){
+  const e=$("gps");let t,c;
+  if(state.demo){t="Demo GPS";c="text-amber-600";}
+  else if(geo.status==="ok"){t="GPS ±"+Math.round(geo.acc)+" m";c="text-emerald-600";}
+  else if(geo.status==="denied"){t="GPS denied · tap to allow";c="text-rose-600";}
+  else if(geo.status==="off"){t="No GPS · tap to retry";c="text-rose-600";}
+  else{t="Requesting GPS…";c="text-slate-500";}
+  e.textContent=t;e.className="font-semibold cursor-pointer "+c;
+}
+function startGPS(){
+  if(!navigator.geolocation){geo.status="off";gpsChip();return;
+  }
+  geo.status="init"; gpsChip();
+  navigator.geolocation.getCurrentPosition(p=>{
+    onPos(p);
+    if(geo.id!=null)navigator.geolocation.clearWatch(geo.id);
+    geo.id=navigator.geolocation.watchPosition(onPos,e=>{
+      if(e.code===1)geo.status="denied";else geo.status="off";gpsChip();draw();
+    },{enableHighAccuracy:true,maximumAge:2000,timeout:20000});
+  },e=>{
+    if(e.code===1)geo.status="denied";else geo.status="off";gpsChip();draw();
+    toast("Please allow GPS location access in your browser prompt");
+  },{enableHighAccuracy:true,timeout:15000,maximumAge:0});
+}
+function onPos(p){
+  const first=!geo.me;geo.me={lat:p.coords.latitude,lng:p.coords.longitude};geo.acc=p.coords.accuracy;geo.status="ok";gpsChip();
+  if(first){if(state.sample)relocateSample();else if(MP.isGeo)setView(geo.me.lat,geo.me.lng,Math.max(MP.z,17));}
+  live();draw();
+}
+function relocateSample(){
+  if(!geo.me)return toast("Waiting for a GPS fix…");
+  const k=MP.isGeo?Math.cos(geo.me.lat*Math.PI/180):1,O=[[4,3],[40,25],[-35,50],[70,-30],[-60,-45],[20,-90]];
+  setAssets(SAMPLE.map((a,i)=>({...a,x:geo.me.lng+O[i][0]/(111320*k),y:geo.me.lat+O[i][1]/111320})),false);
+  state.sample=true;if(MP.isGeo)setView(geo.me.lat,geo.me.lng,18);toast("Sample assets placed around you – the first is ~5 m away");
+}
+function resetSample(){if(geo.me&&MP.isGeo)relocateSample();else{setAssets(SAMPLE.map(a=>({...a})),true);state.sample=true;}}
+function checkRange(a){
+  const p=curPos(a);if(!p)return{ok:false,nogps:true};
+  const d=calcDist(p.lng, p.lat, a.x, a.y, MP.isGeo);
+  return{ok:d<=GEOFENCE,d,acc:p.acc};
+}
+function gate(){
+  if(!state.asset)return false;const r=checkRange(state.asset);if(r.ok)return true;
+  state.verified=false;state.geo=r.nogps?"nogps":"far";state.dist=r.d;closeCam();$("preview").classList.remove("open");renderSheet();
+  toast(r.nogps?"Location unavailable – action blocked[span_16](start_span)[span_16](end_span)":`Out of range (${Math.round(r.d)} m) – action blocked (Max ${GEOFENCE}m)[span_17](start_span)[span_17](end_span)`);return false;
+}
+function live(){
+  if(!state.asset||!$("sheet").classList.contains("open"))return;
+  const r=checkRange(state.asset);
+  if(state.geo==="ok"&&!r.ok&&!r.nogps)gate();
+  else if(state.geo==="far"&&r.d!=null){const e=$("farD");if(e)e.textContent=Math.round(r.d);}
+}
+
+/* CSV IMPORT WIZARD */
+const imp={};
+function readFile(f){
+  if(!f)return;
+  const fr=new FileReader();
+  fr.onload=()=>openImport(fr.result,f.name);
+  fr.onerror=()=>toast("Could not read the file");
+  fr.readAsText(f,"utf-8");
+}
+$("csvIn").addEventListener("change",e=>{readFile(e.target.files[0]);e.target.value="";});
+["dragover","drop"].forEach(ev=>document.addEventListener(ev,e=>{e.preventDefault();if(ev==="drop")readFile(e.dataTransfer.files[0]);}));
+function downloadTemplate(){
+  try{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["\uFEFF"+TEMPLATE],{type:"text/csv"}));a.download="assets_template.csv";document.body.appendChild(a);a.click();a.remove();}
+  catch(e){toast("Download not available in this viewer");}
+}
+function openImport(text,name){
+  Object.assign(imp,{text,name,delim:"auto",hdr:true,typeMode:"column",fixedType:"Manhole",custom:false,mode:"replace"});
+  parseImp();$("imp").classList.add("open");renderImp();
+}
+function parseImp(){
+  imp.d=imp.delim==="auto"?detectDelim(imp.text):imp.delim;
+  const all=splitCSV(imp.text,imp.d);
+  imp.heads=(all[0]||[]).map((h,i)=>imp.hdr&&h.trim()?h.trim():"Column "+(i+1));
+  imp.rows=imp.hdr?all.slice(1):all;
+  imp.map=imp.hdr?guessMap(imp.heads):{};
+  imp.typeMode=imp.map.type==null?"fixed":"column";
+}
+function impSet(k,v){if(v==="")delete imp.map[k];else imp.map[k]=+v;impSummary();}
+function impType(v){if(v==="__c"){imp.custom=true;imp.fixedType="";}else{imp.custom=false;imp.fixedType=v;}renderImp();}
+function impSwap(){const x=imp.map.x,y=imp.map.y;if(y==null)delete imp.map.x;else imp.map.x=y;if(x==null)delete imp.map.y;else imp.map.y=x;renderImp();}
+function impClose(){$("imp").classList.remove("open");}
+const SEL="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm";
+function colOpts(k){return'<option value="">— not in file —</option>'+imp.heads.map((h,i)=>`<option value="${i}" ${imp.map[k]===i?"selected":""}>${esc(h)} · ${colKind(imp.rows,i)}</option>`).join("");}
+function renderImp(){
+  const raw=`<table class="text-[11px] w-full"><thead><tr>${imp.heads.map(h=>`<th class="text-left px-2 py-1 bg-slate-100 whitespace-nowrap">${esc(h)}</th>`).join("")}</tr></thead><tbody>${imp.rows.slice(0,5).map(r=>`<tr>${imp.heads.map((_,i)=>`<td class="px-2 py-1 border-t border-slate-100 whitespace-nowrap">${esc(r[i]||"")}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  const grid=FIELDS.map(([k,l,isNum])=>{
+    if(k==="type")return`<div class="bg-slate-50 rounded-xl p-3 md:col-span-2"><div class="text-xs font-semibold text-slate-600 mb-1">Type <span class="text-slate-400">· Text</span></div><div class="grid gap-2 md:grid-cols-3">
+      <select class="${SEL}" onchange="imp.typeMode=this.value;renderImp()"><option value="column" ${imp.typeMode==="column"?"selected":""}>Read from a column</option><option value="fixed" ${imp.typeMode==="fixed"?"selected":""}>Same type for all rows</option></select>
+      ${imp.typeMode==="column"?`<select class="${SEL}" onchange="impSet('type',this.value)">${colOpts("type")}</select>`
+      :`<select class="${SEL}" onchange="impType(this.value)">${Object.keys(TYPES).map(t=>`<option ${!imp.custom&&imp.fixedType===t?"selected":""}>${t}</option>`).join("")}<option value="__c" ${imp.custom?"selected":""}>Custom…</option></select>${imp.custom?`<input type="text" value="${esc(imp.fixedType)}" oninput="imp.fixedType=this.value;impSummary()" placeholder="Type name" class="${SEL}">`:""}`}</div></div>`;
+    return`<div class="bg-slate-50 rounded-xl p-3"><div class="text-xs font-semibold text-slate-600 mb-1">${l}${k==="x"||k==="y"?" *":""} <span class="text-slate-400">· ${isNum?"Number":"Text"}</span></div><select class="${SEL}" onchange="impSet('${k}',this.value)">${colOpts(k)}</select></div>`;
+  }).join("");
+  $("impBox").innerHTML=`<div class="flex items-start justify-between mb-3"><div class="min-w-0"><div class="text-lg font-bold text-slate-800">Import preview</div><div class="text-xs text-slate-500 truncate">${esc(imp.name)} · ${imp.rows.length} rows · ${imp.heads.length} columns</div></div>
+    <button onclick="impClose()" aria-label="Close" class="w-9 h-9 rounded-full bg-slate-100 text-slate-500"><i class="fa-solid fa-xmark"></i></button></div>
+    <div class="grid gap-2 grid-cols-2 md:grid-cols-3 mb-3">
+      <label class="text-xs text-slate-500">Delimiter<select class="${SEL}" onchange="imp.delim=this.value;parseImp();renderImp()"><option value="auto" ${imp.delim==="auto"?"selected":""}>Auto (${imp.d==="\t"?"tab":imp.d})</option><option value="," ${imp.delim===","?"selected":""}>Comma ,</option><option value=";" ${imp.delim===";"?"selected":""}>Semicolon ;</option><option value="\t" ${imp.delim==="\t"?"selected":""}>Tab</option></select></label>
+      <label class="text-xs text-slate-500">Existing assets<select class="${SEL}" onchange="imp.mode=this.value"><option value="replace" ${imp.mode==="replace"?"selected":""}>Replace</option><option value="append" ${imp.mode==="append"?"selected":""}>Append</option></select></label>
+      <label class="text-sm text-slate-700 flex items-end gap-2 pb-2 col-span-2 md:col-span-1"><input type="checkbox" class="w-5 h-5" ${imp.hdr?"checked":""} onchange="imp.hdr=this.checked;parseImp();renderImp()">First row is a header</label></div>
+    <div class="text-xs font-semibold text-slate-600 mb-1">File preview (first 5 rows)</div>
+    <div class="overflow-auto max-h-40 rounded-xl border border-slate-200 mb-3">${raw}</div>
+    <div class="text-xs font-semibold text-slate-600 mb-1">Map columns to fields (Any coordinate system accepted)[span_18](start_span)[span_18](end_span)</div>
+    <div class="grid gap-2 md:grid-cols-2 mb-3">${grid}</div><div id="impSum"></div>`;
+  impSummary();
+}
+function impSummary(){
+  const r=buildAssets(imp.rows,imp.map,imp),need=imp.map.x==null||imp.map.y==null,ok=!need&&r.assets.length>0;
+  const warn=FIELDS.filter(f=>f[2]&&imp.map[f[0]]!=null&&colKind(imp.rows,imp.map[f[0]])==="Text").map(f=>`${f[1]} column contains text`);
+  if(r.dup)warn.push(`${r.dup} duplicate Asset IDs`);
+  const list=r.assets.slice(0,4).map(a=>`<div class="flex justify-between gap-2 text-[11px] py-1 border-t border-slate-100"><b class="truncate">${esc(a.id)}</b><span>${esc(a.type)}</span><span>${a.x}, ${a.y}</span></div>`).join("");
+  $("impSum").innerHTML=`<div class="rounded-xl border ${ok?"border-emerald-200 bg-emerald-50":"border-rose-200 bg-rose-50"} p-3 mb-3">
+    <div class="text-sm font-semibold ${ok?"text-emerald-800":"text-rose-800"}">${need?"Choose the X and Y coordinate columns":`${r.assets.length} valid · ${r.bad.length} invalid`}</div>
+    ${r.bad.length?`<div class="text-[11px] text-rose-700 mt-1">Row ${r.bad[0].n}: ${r.bad[0].why}${r.bad.length>1?` (+${r.bad.length-1} more)`:""}</div>`:""}
+    ${warn.map(w=>`<div class="text-[11px] text-amber-700 mt-1"><i class="fa-solid fa-triangle-exclamation mr-1"></i>${esc(w)}</div>`).join("")}${list?`<div class="mt-2">${list}</div>`:""}</div>
+    <div class="flex gap-2"><button onclick="impSwap()" class="px-3 py-3 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold" title="Swap X and Y"><i class="fa-solid fa-right-left"></i></button>
+    <button onclick="impClose()" class="flex-1 py-3 rounded-xl bg-slate-100 text-slate-700 font-semibold text-sm">Cancel</button>
+    <button onclick="impConfirm()" ${ok?"":"disabled"} class="flex-1 py-3 rounded-xl bg-blue-700 text-white font-semibold text-sm ${ok?"":"opacity-40"}">Confirm &amp; Plot</button></div>`;
+}
+function impConfirm(){
+  const r=buildAssets(imp.rows,imp.map,imp);if(!r.assets.length)return;
+  const list=imp.mode==="append"?state.assets.concat(r.assets):r.assets;
+  state.sample=false;impClose();setAssets(list,true);go("map");
+  toast(`Plotted ${r.assets.length} assets`+(r.bad.length?` · ${r.bad.length} skipped`:""));
+}
+
+/* ASSET SHEET */
+function openAsset(a){
+  Object.assign(state,{asset:a,action:null,verified:false,geo:"idle",name:"",photos:{before:[],after:[]}});
+  MP.sel=a;MP.z=Math.max(MP.z,18);
+  const wide=innerWidth>=768,sx=(MP.W-(wide?410:0))/2,sy=wide?MP.H/2:MP.H*.28;
+  const ll=toLL(sx,sy);
+  setView(ll.lat,ll.lng);renderSheet();$("sheet").classList.add("open");
+}
+function closeSheet(){$("sheet").classList.remove("open");MP.sel=null;state.geo="idle";draw();}
+function cell(k,v){return `<div class="bg-slate-50 rounded-xl p-3"><div class="text-[10px] uppercase tracking-wide text-slate-400">${k}</div><div class="text-sm font-semibold text-slate-800 break-words">${esc(v)}</div></div>`;}
+function renderSheet(stage){
+  const a=state.asset,T=typeStyle(a.type);let extra="";
+  if(a.covers!=null) extra+=cell("Number of Covers",a.covers);
+  if(a.shape) extra+=cell("Shape",a.shape);
+  if(a.dims) extra+=cell("Dimensions",a.dims);
+  let h=`<div class="p-5 fade">
+    <div class="w-10 h-1.5 bg-slate-200 rounded-full mx-auto mb-4 md:hidden"></div>
+    <div class="flex items-center gap-3 mb-4">
+      <div class="w-12 h-12 rounded-2xl text-white flex items-center justify-center text-lg shrink-0" style="background:${T.color}"><i class="fa-solid ${T.icon}"></i></div>
+      <div class="flex-1 min-w-0"><div class="text-lg font-bold text-slate-800 truncate">${esc(a.id)}</div><div class="text-xs text-slate-500">${esc(a.type)}</div></div>
+      <button onclick="closeSheet()" aria-label="Close" class="w-9 h-9 rounded-full bg-slate-100 text-slate-500"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="grid grid-cols-2 gap-2 mb-4">
+      ${cell("X Coordinate",a.x)}${cell("Y Coordinate",a.y)}
+      ${cell("Invert Level",fmt(a.invert))}${cell("Ground Level",fmt(a.ground))}
+      ${cell("Size",a.size)}${cell("Type",a.type)}${extra}
+    </div>`;
+  if(stage==="verifying"){
+    h+=`<div class="rounded-2xl bg-blue-50 p-5 text-center"><i class="fa-solid fa-circle-notch spin text-3xl text-blue-700"></i><div class="mt-2 font-semibold text-blue-900">Verifying Location...</div><div class="text-xs text-blue-600">Comparing GPS with asset coordinates[span_19](start_span)[span_19](end_span)</div></div>`;
+  }else if(state.geo==="far"||state.geo==="nogps"){
+    const msg=state.geo==="far"?`You are <b id="farD">${Math.round(state.dist)}</b> m from this asset. Move within ${GEOFENCE} m to continue[span_20](start_span)[span_20](end_span).`:(geo.status==="denied"?"Location permission was denied. Allow location access in the browser, or enable Demo GPS in Settings.":"No GPS fix yet. Make sure location is on, or enable Demo GPS in Settings.");
+    h+=`<div class="rounded-2xl bg-rose-50 border border-rose-200 p-4 fade"><div class="flex gap-3"><i class="fa-solid fa-ban text-rose-600 text-xl mt-0.5"></i><div><div class="font-semibold text-rose-800 text-sm">Action blocked (Geofence ≤ ${GEOFENCE}m)[span_21](start_span)[span_21](end_span)</div><div class="text-xs text-rose-700">${msg}</div></div></div><button onclick="${state.geo==="nogps"?"startGPS();":""}startAction()" class="mt-3 w-full py-3 rounded-xl bg-rose-600 text-white font-semibold text-sm">Re-check location</button></div>`;
+  }else if(!state.verified){
+    h+=`<button onclick="startAction()" class="w-full py-4 rounded-2xl bg-blue-800 text-white font-bold shadow-lg active:scale-[.98] transition"><i class="fa-solid fa-location-crosshairs mr-2"></i>Start Action</button>`;
+  }else{
+    h+=`<div class="rounded-2xl bg-emerald-50 border border-emerald-200 p-3 flex items-start gap-3 mb-3 fade"><i class="fa-solid fa-circle-check text-emerald-600 text-xl mt-0.5"></i><div><div class="font-semibold text-emerald-800 text-sm">Location Verified[span_22](start_span)[span_22](end_span)</div><div class="text-xs text-emerald-700">You are within ${Math.max(1,Math.ceil(state.dist))} meters of the asset (≤ ${GEOFENCE}m)[span_23](start_span)[span_23](end_span).</div></div></div>`;
+    h+=state.action?formHtml():`<div class="grid grid-cols-2 gap-3">
+      <button onclick="pick('Inspection')" class="py-4 rounded-2xl bg-blue-700 text-white font-semibold shadow"><i class="fa-solid fa-magnifying-glass block text-xl mb-1"></i>Inspection</button>
+      <button onclick="pick('Maintenance')" class="py-4 rounded-2xl bg-amber-500 text-white font-semibold shadow"><i class="fa-solid fa-screwdriver-wrench block text-xl mb-1"></i>Maintenance</button></div>`;
+  }
+  $("sheet").innerHTML=h+"</div>";
+}
+function startAction(){
+  state.geo="checking";state.verified=false;renderSheet("verifying");
+  setTimeout(()=>{const r=checkRange(state.asset);state.dist=r.d;state.geo=r.nogps?"nogps":r.ok?"ok":"far";state.verified=r.ok;renderSheet();},1200);
+}
+function pick(a){if(!gate())return;state.action=a;renderSheet();}
+function photoBlock(slot,label){
+  return `<div class="mb-3"><div class="flex justify-between items-center mb-2"><span class="text-sm font-semibold text-slate-700">${label}</span>
+    <button onclick="openCam('${slot}')" class="text-xs px-3 py-2 rounded-xl bg-slate-800 text-white"><i class="fa-solid fa-camera mr-1"></i>Capture</button></div>
+    <div class="flex gap-2 flex-wrap min-h-[64px] bg-slate-50 rounded-xl p-2 border border-dashed border-slate-300">
+    ${state.photos[slot].map(p=>`<img src="${p}" alt="" class="w-16 h-16 object-cover rounded-lg shadow">`).join("")||'<span class="text-xs text-slate-400 m-auto">No photos yet · camera only</span>'}
+    </div></div>`;
+}
+function formHtml(){
+  const m=state.action==="Maintenance";
+  return `<div class="fade">
+    <div class="flex items-center justify-between mb-3"><span class="px-3 py-1 rounded-full text-xs font-bold ${m?'bg-amber-100 text-amber-700':'bg-blue-100 text-blue-700'}">${state.action}</span>
+      <button onclick="state.action=null;renderSheet()" class="text-xs text-slate-500 underline">Change</button></div>
+    <label class="text-sm font-semibold text-slate-700">Inspector Name</label>
+    <input type="text" value="${esc(state.name)}" oninput="state.name=this.value" placeholder="Enter full name" class="w-full mt-1 mb-3 px-4 py-3 rounded-xl border border-slate-200 bg-slate-50">
+    ${photoBlock("before","Before Photos")}${m?photoBlock("after","After Photos"):""}
+    <button onclick="submitForm()" class="w-full py-4 rounded-2xl bg-emerald-600 text-white font-bold shadow-lg mt-1"><i class="fa-solid fa-paper-plane mr-2"></i>Submit ${state.action}</button></div>`;
+}
+function submitForm(){
+  if(!gate())return;
+  if(!state.name.trim()) return toast("Inspector name is required");
+  if(!state.photos.before.length) return toast("Capture at least one Before photo");
+  if(state.action==="Maintenance"&&!state.photos.after.length) return toast("Capture at least one After photo");
+  state.tasks.unshift({id:state.asset.id,type:state.asset.type,action:state.action,name:state.name.trim(),date:new Date().toLocaleString(),thumb:state.photos.before[0],count:state.photos.before.length+state.photos.after.length});
+  closeSheet();toast("Saved successfully – see Task List");
+}
+
+/* CAMERA & WATERMARK */
+function openCam(slot){
+  if(!gate())return;
+  if(!state.name.trim()) return toast("Enter Inspector Name first");
+  state.slot=slot;$("camTitle").textContent=(slot==="before"?"Before":"After")+" Photo · "+state.asset.id;
+  $("camera").classList.add("open");
+}
+function closeCam(){$("camera").classList.remove("open");}
+function capture(){
+  closeCam();
+  const c=$("canvas"),g=c.getContext("2d"),W=c.width,H=c.height;
+  const sky=g.createLinearGradient(0,0,0,H);sky.addColorStop(0,"#94a3b8");sky.addColorStop(1,"#475569");
+  g.fillStyle=sky;g.fillRect(0,0,W,H);
+  g.fillStyle="#334155";g.fillRect(0,H*.55,W,H*.45);
+  for(let i=0;i<60;i++){g.fillStyle=`rgba(${100+Math.random()*60|0},${100+Math.random()*60|0},${110+Math.random()*60|0},.35)`;g.fillRect(Math.random()*W,H*.55+Math.random()*H*.45,Math.random()*40+6,Math.random()*10+3);}
+  const cx=W/2,cy=H*.62;
+  g.fillStyle="#0f172a";g.beginPath();g.ellipse(cx,cy,150,52,0,0,7);g.fill();
+  g.strokeStyle="#64748b";g.lineWidth=10;g.beginPath();g.ellipse(cx,cy,150,52,0,0,7);g.stroke();
+  g.fillStyle="#1e293b";g.beginPath();g.ellipse(cx,cy,115,38,0,0,7);g.fill();
+  g.strokeStyle="#475569";g.lineWidth=4;
+  for(let i=-3;i<=3;i++){g.beginPath();g.moveTo(cx+i*28,cy-34);g.lineTo(cx+i*28,cy+34);g.stroke();}
+  const lines=[`Asset ID: ${state.asset.id}`,`Date: ${new Date().toLocaleString()}`,`Project: ${PROJECT.name}`,`Project No: ${PROJECT.number}`,`Inspector: ${state.name.trim()}`];
+  const lh=34,ph=lines.length*lh+24;
+  g.fillStyle="rgba(15,23,42,.75)";g.fillRect(0,H-ph,W,ph);
+  g.fillStyle="#38bdf8";g.fillRect(0,H-ph,8,ph);
+  g.font="bold 24px Arial";g.textBaseline="top";g.textAlign="left";g.fillStyle="#fff";
+  lines.forEach((t,i)=>g.fillText(t,24,H-ph+12+i*lh));
+  g.save();g.translate(W/2,H*.28);g.rotate(-0.35);g.font="bold 54px Arial";g.textAlign="center";
+  g.fillStyle="rgba(255,255,255,.2)";g.fillText(state.asset.id+" · "+PROJECT.number,0,0);g.restore();
+  $("preview").classList.add("open");
+}
+function retake(){$("preview").classList.remove("open");openCam(state.slot);}
+function savePhoto(){
+  state.photos[state.slot].push($("canvas").toDataURL("image/jpeg",.85));
+  $("preview").classList.remove("open");renderSheet();toast("Watermarked photo saved");
+}
+
+/* TASKS */
+function renderTasks(){
+  const el=$("taskList");
+  if(!state.tasks.length){el.innerHTML='<div class="md:col-span-2 bg-white rounded-2xl p-8 text-center text-slate-400 shadow"><i class="fa-solid fa-inbox text-4xl mb-3"></i><div class="text-sm">No submissions yet.<br>Select an asset on the map to begin.</div></div>';return;}
+  el.innerHTML=state.tasks.map(t=>`<div class="bg-white rounded-2xl p-3 shadow flex gap-3 fade"><img src="${t.thumb}" alt="" class="w-16 h-16 rounded-xl object-cover">
+    <div class="flex-1 min-w-0"><div class="flex justify-between"><b class="text-sm text-slate-800">${esc(t.id)}</b><span class="text-[10px] px-2 py-0.5 rounded-full font-bold ${t.action==='Maintenance'?'bg-amber-100 text-amber-700':'bg-blue-100 text-blue-700'}">${t.action}</span></div>
+    <div class="text-xs text-slate-500">${esc(t.type)} · ${t.count} photo(s)</div><div class="text-xs text-slate-400 truncate">${esc(t.name)} · ${t.date}</div></div></div>`).join("");
+}
+
+/* GANTT */
+function parseTasks(txt){
+  const rows=splitCSV(txt),keys=rows[0].map(k=>k.trim());
+  return rows.slice(1).map(c=>{const o={};keys.forEach((k,i)=>o[k]=(c[i]||"").trim());
+    return {id:o.id,name:o.name,start:o.start,end:o.end,progress:+o.progress,dependencies:o.dependencies.replace(/;/g,",")};});
+}
+function fallbackGantt(tasks){
+  const D=s=>new Date(s).getTime(),min=Math.min(...tasks.map(t=>D(t.start))),max=Math.max(...tasks.map(t=>D(t.end))),span=max-min||1;
+  $("ganttHost").innerHTML='<div class="p-4" style="min-width:560px">'+tasks.map(t=>{
+    const l=(D(t.start)-min)/span*100,w=Math.max((D(t.end)-D(t.start))/span*100,2);
+    return `<div class="flex items-center mb-1"><div class="w-40 text-xs text-slate-600 truncate pr-2">${esc(t.name)}</div><div class="relative flex-1 h-8 bg-slate-50 rounded"><div class="gbar" style="left:${l}%;width:${w}%"><div style="width:${t.progress}%;height:100%;background:#1e3a8a;border-radius:6px"></div></div></div></div>`;
+  }).join("")+'</div>';
+}
+function renderGantt(){
+  $("modes").innerHTML=["Day","Week","Month"].map(m=>`<button onclick="ganttMode='${m}';renderGantt()" class="px-4 py-2 rounded-full text-xs font-semibold ${m===ganttMode?'bg-blue-800 text-white':'bg-white text-slate-600 shadow'}">${m}</button>`).join("");
+  const tasks=parseTasks(CSV);
+  if(typeof Gantt==="undefined") return fallbackGantt(tasks);
+  $("ganttHost").innerHTML='<svg id="gantt"></svg>';
+  try{new Gantt("#gantt",tasks,{view_mode:ganttMode,bar_height:26,padding:16});}
+  catch(e){fallbackGantt(tasks);}
+}
+
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){impClose();closeCam();$("preview").classList.remove("open");closeSheet();}});
+initMap();setAssets(SAMPLE.map(a=>({...a})),true);go("map");gpsChip();startGPS();
+</script>
+</body>
+</html>
