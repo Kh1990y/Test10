@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>StormGuard – Drainage Asset Manager</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css">
+<script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
+<style>
+  :root{--navh:calc(68px + env(safe-area-inset-bottom,0px));--rail:0px}
+  html,body{height:100%;margin:0;overflow:hidden;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#0f172a;-webkit-tap-highlight-color:transparent}
+  #app{position:fixed;inset:0;background:#f1f5f9;overflow:hidden}
+  .view{position:absolute;top:0;left:var(--rail);right:0;bottom:var(--navh);display:none;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .view.active{display:block}
+  .wrap{max-width:1000px;margin:0 auto;padding:16px}
+  #mapBox{position:absolute;inset:0;background:#e9eef3}
+  #map{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+  .mc{width:42px;height:42px;border-radius:12px;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.25);color:#1e293b;display:flex;align-items:center;justify-content:center}
+  .hidden{display:none!important}
+  .mc.on{background:#2563eb;color:#fff}
+  .sheet{position:absolute;left:var(--rail);right:0;bottom:var(--navh);background:#fff;border-radius:24px 24px 0 0;box-shadow:0 -12px 40px rgba(15,23,42,.25);transform:translateY(120%);transition:transform .35s cubic-bezier(.2,.8,.2,1);z-index:1000;max-height:82%;overflow-y:auto}
+  .sheet.open{transform:none}
+  .overlay{position:absolute;inset:0;background:rgba(15,23,42,.65);z-index:2000;display:none;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto}
+  .overlay.open{display:flex}
+  .modal{width:100%;max-width:420px;margin:auto}
+  .nav{position:absolute;left:0;right:0;bottom:0;height:var(--navh);padding-bottom:env(safe-area-inset-bottom,0px);background:#fff;border-top:1px solid #e2e8f0;display:flex;z-index:1500}
+  .nav .brand{display:none}
+  .nav button{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:11px;color:#64748b;transition:.2s}
+  .nav button i{font-size:19px}
+  .nav button.active{color:#1d4ed8;font-weight:600}
+  @media (min-width:768px){
+    :root{--navh:0px;--rail:88px}
+    .nav{top:0;right:auto;width:88px;height:auto;padding:12px 0;border-top:0;border-right:1px solid #e2e8f0;flex-direction:column;justify-content:flex-start;gap:6px}
+    .nav .brand{display:flex;width:44px;height:44px;margin:0 auto 12px;border-radius:14px;background:#1e3a8a;color:#fff;align-items:center;justify-content:center;font-size:18px}
+    .nav button{flex:none;height:72px;margin:0 8px;border-radius:14px}
+    .nav button.active{background:#eff6ff}
+    .sheet{left:auto;top:0;bottom:0;width:410px;max-height:none;border-radius:24px 0 0 24px;transform:translateX(110%);box-shadow:-12px 0 40px rgba(15,23,42,.25)}
+    .sheet.open{transform:none}
+  }
+  .spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+  .pulse-ring{animation:pr 1.6s ease-out infinite}@keyframes pr{0%{box-shadow:0 0 0 0 rgba(37,99,235,.5)}100%{box-shadow:0 0 0 22px rgba(37,99,235,0)}}
+  .pin{width:34px;height:34px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);display:flex;align-items:center;justify-content:center;border:3px solid #fff;box-shadow:0 4px 10px rgba(0,0,0,.35)}
+  .pin i{transform:rotate(45deg);color:#fff;font-size:13px}
+  .fade{animation:fd .3s ease}@keyframes fd{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  #toast{position:absolute;top:16px;left:50%;transform:translate(-50%,-140px);background:#0f172a;color:#fff;padding:10px 18px;border-radius:14px;font-size:13px;z-index:3000;transition:.4s;box-shadow:0 8px 24px rgba(0,0,0,.3);max-width:92vw;text-align:center}
+  #toast.show{transform:translate(-50%,0)}
+  .gbar{height:22px;border-radius:6px;background:#3b82f6;position:absolute;top:4px}
+  input[type=text]{font-size:16px}
+  input:focus{outline:none;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="toast"></div>
+  <input type="file" id="csvIn" accept=".csv,.txt,.kml,.kmz,text/csv,text/plain,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz" class="hidden">
+  <input type="file" id="schedIn" accept=".csv,.txt,text/csv,text/plain" class="hidden">
+
+  <section id="v-map" class="view active" style="overflow:hidden">
+    <div id="mapBox"><canvas id="map"></canvas><div id="attr" class="absolute right-1 bottom-0 text-[9px] text-slate-500 bg-white/70 px-1 rounded"></div></div>
+    <div class="absolute left-3 bottom-4 z-[900] flex flex-col gap-2">
+      <button class="mc" onclick="zoomBtn(1)" aria-label="Zoom in"><i class="fa-solid fa-plus"></i></button>
+      <button class="mc" onclick="zoomBtn(-1)" aria-label="Zoom out"><i class="fa-solid fa-minus"></i></button>
+      <button class="mc" onclick="fitAll()" aria-label="Fit all"><i class="fa-solid fa-expand"></i></button>
+      <button class="mc" id="lyrBtn" onclick="cycleLayer()" aria-label="Basemap"><i class="fa-solid fa-layer-group"></i></button>
+      <button class="mc" id="locBtn" style="color:#1d4ed8" onclick="locateMe()" aria-label="My location"><i class="fa-solid fa-location-crosshairs"></i></button>
+    </div>
+    <div class="absolute top-3 left-3 right-3 md:right-auto md:w-[460px] z-[900] bg-white/95 backdrop-blur rounded-2xl shadow-lg px-3 py-3 flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl bg-blue-900 text-white flex items-center justify-center md:hidden shrink-0"><i class="fa-solid fa-droplet"></i></div>
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-bold text-slate-800 leading-tight truncate">Riyadh Storm Network – Phase 2</div>
+        <div class="text-[11px] text-slate-500 truncate"><span id="cnt">0</span> assets · <span id="gps" onclick="startGPS()" class="font-semibold cursor-pointer">GPS…</span></div>
+      </div>
+      <button onclick="$('csvIn').click()" class="text-xs px-3 py-2 rounded-xl bg-blue-800 text-white font-semibold whitespace-nowrap"><i class="fa-solid fa-file-import mr-1"></i>Import</button>
+    </div>
+    <div id="offBadge" class="hidden absolute top-[78px] left-3 z-[900] text-[10px] bg-amber-100 text-amber-800 px-2 py-1 rounded-full font-semibold">Offline schematic basemap</div>
+    <div class="absolute right-3 bottom-4 md:right-auto md:left-16 z-[900] flex flex-col gap-1.5" id="legend"></div>
+    <div id="empty" class="hidden absolute left-3 right-3 md:left-1/2 md:right-auto md:-translate-x-1/2 md:w-[380px] top-24 z-[900] bg-white rounded-2xl shadow-lg p-4 text-center"><div class="font-semibold text-slate-800 text-sm">No assets on the map</div><div class="text-xs text-slate-500 mb-3">Import a CSV, KML or KMZ file (any coordinate system) to plot your drainage assets.</div><button onclick="$('csvIn').click()" class="px-4 py-2 rounded-xl bg-blue-800 text-white text-sm font-semibold"><i class="fa-solid fa-file-import mr-1"></i>Import CSV / KML / KMZ</button></div>
+  </section>
+
+  <section id="v-tasks" class="view"><div class="wrap">
+    <h2 class="text-xl font-bold text-slate-800 mb-1">Task List</h2>
+    <p class="text-sm text-slate-500 mb-4">Submitted inspections & maintenance</p>
+    <div id="taskList" class="grid gap-3 md:grid-cols-2"></div>
+  </div></section>
+
+  <section id="v-progress" class="view"><div class="wrap">
+    <h2 class="text-xl font-bold text-slate-800 mb-1">Project Progress</h2>
+    <p class="text-sm text-slate-500 mb-3" id="progInfo"></p>
+    <div id="rings" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3"></div>
+    <div id="compBars" class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4"></div>
+    <div class="bg-white rounded-2xl shadow p-4 mb-4"><div class="font-semibold text-slate-800 text-sm mb-2">Financial progress – manual update · التحديث اليدوي</div>
+      <div class="flex items-center gap-3"><input id="finR" type="range" min="0" max="100" step="0.5" class="flex-1" oninput="setFin(this.value,'r')"><input id="finN" type="number" min="0" max="100" step="0.1" class="w-24 px-3 py-2 rounded-lg border border-slate-200 text-sm" oninput="setFin(this.value,'n')"><span class="text-sm text-slate-500">%</span></div></div>
+    <div class="font-semibold text-slate-800 text-sm mb-2">Schedule items</div>
+    <div id="progTasks" class="grid gap-3 md:grid-cols-2"></div>
+  </div></section>
+
+  <section id="v-gantt" class="view"><div class="wrap">
+    <h2 class="text-xl font-bold text-slate-800 mb-1">Project Schedule</h2>
+    <p class="text-sm text-slate-500 mb-3" id="schedInfo"></p>
+    <div class="flex flex-wrap gap-2 mb-3">
+      <button onclick="downloadSched()" class="px-4 py-2 rounded-xl bg-slate-800 text-white text-xs font-semibold"><i class="fa-solid fa-download mr-1"></i>Download template</button>
+      <button onclick="$('schedIn').click()" class="px-4 py-2 rounded-xl bg-blue-800 text-white text-xs font-semibold"><i class="fa-solid fa-upload mr-1"></i>Upload schedule CSV</button>
+      <button onclick="resetSched()" class="px-4 py-2 rounded-xl bg-white text-slate-600 text-xs font-semibold shadow"><i class="fa-solid fa-rotate-left mr-1"></i>Sample</button>
+    </div>
+    <div class="flex gap-2 mb-3" id="modes"></div>
+    <div id="ganttHost" class="bg-white rounded-2xl shadow overflow-auto"></div>
+    <p class="text-[11px] text-slate-500 mt-3 leading-relaxed">Columns: id, name, start, end, dependencies, asset_type, quantity, weight, inspection_share, maintenance_share, progress. Every item with an <b>asset_type</b> tracks <b>Inspection</b> (before photos) and <b>Maintenance</b> (before + after photos) separately: each is the share of assets of that type already submitted in the field. The two shares (default 50 / 50, any numbers are normalized to 100) decide how much each counts toward the item. Leave <b>quantity</b> empty to use all loaded assets of that type. Items without asset_type use the manual <b>progress</b> %. Dates: yyyy-mm-dd or dd/mm/yyyy.</p>
+  </div></section>
+
+  <section id="v-settings" class="view"><div class="wrap">
+    <h2 class="text-xl font-bold text-slate-800 mb-4">Settings</h2>
+    <div class="bg-white rounded-2xl shadow p-4 mb-4">
+      <div class="font-bold text-slate-800 mb-1">Location</div>
+      <p class="text-xs text-slate-500 mb-3">Real GPS is enforced: actions are blocked when you are more than 10 m from the asset. Demo GPS only previews the flow away from the site.</p>
+      <label class="flex items-center justify-between text-sm mb-3"><span>Demo GPS (simulate 7 m from selected asset)</span><input type="checkbox" id="demo" class="w-5 h-5" onchange="state.demo=this.checked;gpsChip();draw()"></label>
+    </div>
+    <div class="bg-white rounded-2xl shadow p-4 mb-4">
+      <div class="font-bold text-slate-800 mb-1">Asset Data (CSV)</div>
+      <p class="text-xs text-slate-500 mb-3">Columns: Asset ID, X Coordinate, Y Coordinate, Invert Level, Ground Level, Size, Type, Number of Covers (Grill), Shape, Dimensions (Line). CSV delimiter , ; or tab. KML / KMZ are also supported (the Folder name can serve as the asset type; line and polygon placemarks are plotted at their center). Any coordinate system (WGS84, DMS, UTM, Ain el Abd, ED50, Web Mercator) can be chosen in the preview. You can also drag a CSV onto the page.</p>
+      <div class="flex flex-wrap gap-2">
+        <button onclick="$('csvIn').click()" class="px-4 py-2 rounded-xl bg-blue-800 text-white text-sm font-semibold"><i class="fa-solid fa-upload mr-1"></i>Upload CSV / KML / KMZ</button>
+        <button onclick="downloadTemplate()" class="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold"><i class="fa-solid fa-download mr-1"></i>Template</button>
+        <button id="delBtn" onclick="clearAssets()" class="px-4 py-2 rounded-xl bg-rose-50 text-rose-700 text-sm font-semibold"><i class="fa-solid fa-trash mr-1"></i>Delete all assets</button>
+        <button id="recBtn" onclick="clearRecords()" class="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold"><i class="fa-solid fa-eraser mr-1"></i>Clear field records</button>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl shadow divide-y divide-slate-100">
+      <div class="p-4 flex justify-between text-sm"><span class="text-slate-500">Project Name</span><b>Riyadh Storm Network</b></div>
+      <div class="p-4 flex justify-between text-sm"><span class="text-slate-500">Project Number</span><b>SW-2026-014</b></div>
+      <div class="p-4 flex justify-between text-sm"><span class="text-slate-500">Geofence radius</span><b>≤ 10 m</b></div>
+      <div class="p-4 flex justify-between text-sm"><span class="text-slate-500">Gallery uploads</span><b class="text-rose-600">Disabled</b></div>
+      <div class="p-4 flex justify-between text-sm"><span class="text-slate-500">Watermark</span><b class="text-emerald-600">Enforced</b></div>
+    </div>
+    <p class="text-xs text-slate-400 mt-4 text-center">Prototype v1.2 · Simulated geofence & camera</p>
+  </div></section>
+
+  <div id="sheet" class="sheet"></div>
+
+  <div id="imp" class="overlay"><div id="impBox" class="modal bg-white rounded-3xl p-4 shadow-2xl" style="max-width:780px"></div></div>
+
+  <div id="camera" class="overlay">
+    <div class="modal bg-slate-900 rounded-3xl overflow-hidden shadow-2xl">
+      <div class="flex justify-between items-center px-4 py-3 text-white">
+        <span class="text-sm font-semibold" id="camTitle">Camera</span>
+        <button onclick="closeCam()" class="w-9 h-9 rounded-full bg-white/10"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="relative bg-gradient-to-br from-slate-700 to-slate-800 aspect-[4/3] flex flex-col items-center justify-center text-slate-300">
+        <i class="fa-solid fa-camera text-5xl mb-2"></i>
+        <span class="text-xs">Live camera preview (simulated)</span>
+        <div class="absolute inset-4 border border-white/30 rounded-lg"></div>
+        <span class="absolute top-6 left-6 text-[10px] bg-rose-600 text-white px-2 py-0.5 rounded-full">LIVE ONLY</span>
+      </div>
+      <div class="p-4 flex items-center justify-center gap-6">
+        <span class="text-[11px] text-slate-400 w-20 text-center"><i class="fa-solid fa-ban mr-1"></i>No gallery</span>
+        <button onclick="capture()" aria-label="Capture" class="w-16 h-16 rounded-full bg-white border-4 border-slate-400 active:scale-90 transition"></button>
+        <span class="w-20"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="preview" class="overlay">
+    <div class="modal bg-white rounded-3xl p-4 shadow-2xl fade">
+      <h3 class="font-bold text-slate-800 mb-2">Captured Photo</h3>
+      <canvas id="canvas" width="800" height="600" class="w-full rounded-xl border border-slate-200"></canvas>
+      <p class="text-[11px] text-slate-500 mt-2"><i class="fa-solid fa-lock text-emerald-600 mr-1"></i>Watermark is permanently burned into the image.</p>
+      <div class="flex gap-2 mt-3">
+        <button onclick="retake()" class="flex-1 py-3 rounded-xl bg-slate-100 text-slate-700 font-semibold text-sm">Retake</button>
+        <button onclick="savePhoto()" class="flex-1 py-3 rounded-xl bg-blue-700 text-white font-semibold text-sm">Save Photo</button>
+      </div>
+    </div>
+  </div>
+
+  <nav class="nav" id="nav"></nav>
+</div>
+
+<script>
+const PROJECT={name:"Riyadh Storm Network",number:"SW-2026-014"};
+const TYPES={
+  "Manhole":{color:"#1e40af",icon:"fa-circle-dot"},
+  "Catch Basin":{color:"#0e7490",icon:"fa-fill-drip"},
+  "Grill":{color:"#b45309",icon:"fa-table-cells"},
+  "Open Channel":{color:"#047857",icon:"fa-water"},
+  "Closed Channel":{color:"#6d28d9",icon:"fa-grip-lines"},
+  "Line":{color:"#be123c",icon:"fa-minus"}
+};
+const typeStyle=t=>TYPES[t]||{color:"#475569",icon:"fa-location-dot"};
+const SCHED_DEFAULT=`id,name,start,end,dependencies,asset_type,quantity,weight,inspection_share,maintenance_share,progress
+1,Site Survey,2026-10-01,2026-10-10,,,,,,,100
+2,Manhole Works,2026-10-08,2026-10-25,1,Manhole,,,40,60,
+3,Catch Basin Works,2026-10-20,2026-11-10,2,Catch Basin,,,30,70,
+4,Grill Works,2026-11-05,2026-11-20,3,Grill,,,30,70,
+5,Open Channel Works,2026-11-12,2026-12-05,3,Open Channel,,,30,70,
+6,Closed Channel Works,2026-11-20,2026-12-10,4,Closed Channel,,,30,70,
+7,Line Works,2026-11-25,2026-12-18,4,Line,,,40,60,
+8,Final Report,2026-12-15,2026-12-30,5;6;7,,,,,,0
+`;
+const TEMPLATE="Asset ID,X Coordinate,Y Coordinate,Invert Level,Ground Level,Size,Type,Number of Covers,Shape,Dimensions\nGR-0107,46.6741,24.7148,613.05,613.90,900 mm,Grill,3,,\nMH-0012,46.6753,24.7136,612.35,614.10,1200 mm,Manhole,,,\nLN-0088,46.6760,24.7120,611.75,613.55,DN 900,Line,,Circular,Ø 900 mm\n";
+
+/*PURE-START*/
+const FIELDS=[["id","Asset ID",0],["x","X Coordinate",1],["y","Y Coordinate",1],["invert","Invert Level",1],["ground","Ground Level",1],["size","Size",0],["type","Type",0],["covers","Number of Covers",1],["shape","Shape",0],["dims","Dimensions",0]];
+function detectDelim(t){const f=String(t).replace(/^\uFEFF/,"").split(/\r?\n/)[0]||"";return[",",";","\t"].map(d=>[d,f.split(d).length]).sort((a,b)=>b[1]-a[1])[0][0];}
+function splitCSV(text,delim){
+  text=String(text).replace(/^\uFEFF/,"");delim=delim||detectDelim(text);
+  const rows=[];let row=[],f="",q=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(q){if(ch==='"'){if(text[i+1]==='"'){f+='"';i++;}else q=false;}else f+=ch;}
+    else if(ch==='"')q=true;
+    else if(ch===delim){row.push(f);f="";}
+    else if(ch==="\n"||ch==="\r"){if(ch==="\r"&&text[i+1]==="\n")i++;row.push(f);f="";if(row.some(c=>c.trim()!==""))rows.push(row);row=[];}
+    else f+=ch;
+  }
+  row.push(f);if(row.some(c=>c.trim()!==""))rows.push(row);
+  return rows;
+}
+function num(s){
+  if(s==null)return NaN;
+  s=String(s).replace(/[٠-٩]/g,d=>d.charCodeAt(0)-1632).replace(/٫/g,".").replace(",",".").trim();
+  return s===""?NaN:parseFloat(s);
+}
+function coord(s){
+  if(s==null)return NaN;
+  s=String(s).replace(/[٠-٩]/g,d=>d.charCodeAt(0)-1632).replace(/٫/g,".").trim();
+  if(!s)return NaN;
+  if(/^[+-]?\d+(?:[.,]\d+)?(?:\s*m)?$/i.test(s))return parseFloat(s.replace(",","."));
+  const nn=s.match(/\d+(?:[.,]\d+)?/g)||[];
+  if(nn.length>=2&&/[°'"′″NSEW\s]/i.test(s)){
+    const v=nn.map(t=>parseFloat(t.replace(",","."))),r=v[0]+(v[1]||0)/60+(v[2]||0)/3600;
+    return(/^\s*-|[SW]\s*$|^\s*[SW]/i.test(s)?-1:1)*r;
+  }
+  return num(s);
+}
+function normType(t){
+  const s=String(t||"").trim(),l=s.toLowerCase();
+  if(/catch|بالوع/.test(l))return"Catch Basin";
+  if(/manhole|منهول|مانهول/.test(l))return"Manhole";
+  if(/grill|grate|شبك|مصفا/.test(l))return"Grill";
+  if(/open/.test(l)&&/channel/.test(l)||/قناة مفتوحة|مفتوح/.test(l))return"Open Channel";
+  if(/closed|box|culvert/.test(l)&&/channel|culvert/.test(l)||/قناة مغلقة|مغلق/.test(l))return"Closed Channel";
+  if(/line|pipe|خط|ماسورة/.test(l))return"Line";
+  return s||"Asset";
+}
+const ALIAS={id:["assetid","id","asset","name","رقمالاصل","رقمالأصل"],x:["xcoordinate","x","lon","lng","long","longitude","easting","e"],y:["ycoordinate","y","lat","latitude","northing","n"],
+  invert:["invertlevel","invert","il"],ground:["groundlevel","ground","gl"],size:["size","المقاس"],type:["type","assettype","النوع","folder","layer","category"],
+  covers:["numberofcovers","covers","numcovers","noofcovers"],shape:["shape","الشكل"],dims:["dimensions","dimension","dims"]};
+function guessMap(heads){const hk=heads.map(h=>h.toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]/g,""));const m={};for(const k in ALIAS){const i=hk.findIndex(h=>ALIAS[k].includes(h));if(i>=0)m[k]=i;}return m;}
+function colKind(rows,i){const v=rows.slice(0,80).map(r=>String(r[i]==null?"":r[i]).trim()).filter(Boolean);return!v.length?"Empty":v.every(s=>isFinite(coord(s)))?"Number":"Text";}
+/* ---- coordinate systems ---- */
+const ELL={wgs:[6378137,1/298.257223563],intl:[6378388,1/297]};
+const DATUM={wgs:null,aea:{e:"intl",d:[-143,-236,7]},ed50:{e:"intl",d:[-87,-98,-121]}};
+function tmInv(E,N,zone,north,el){
+  const a=el[0],f=el[1],e2=f*(2-f),ep2=e2/(1-e2),k0=.9996,x=E-500000,y=north?N:N-1e7,M=y/k0;
+  const mu=M/(a*(1-e2/4-3*e2*e2/64-5*e2**3/256)),e1=(1-Math.sqrt(1-e2))/(1+Math.sqrt(1-e2));
+  const p1=mu+(3*e1/2-27*e1**3/32)*Math.sin(2*mu)+(21*e1**2/16-55*e1**4/32)*Math.sin(4*mu)+(151*e1**3/96)*Math.sin(6*mu)+(1097*e1**4/512)*Math.sin(8*mu);
+  const sn=Math.sin(p1),cs=Math.cos(p1),N1=a/Math.sqrt(1-e2*sn*sn),T1=Math.tan(p1)**2,C1=ep2*cs*cs,R1=a*(1-e2)/(1-e2*sn*sn)**1.5,D=x/(N1*k0);
+  const lat=p1-(N1*Math.tan(p1)/R1)*(D*D/2-(5+3*T1+10*C1-4*C1*C1-9*ep2)*D**4/24+(61+90*T1+298*C1+45*T1*T1-252*ep2-3*C1*C1)*D**6/720);
+  const lon=((zone-1)*6-180+3)*Math.PI/180+(D-(1+2*T1+C1)*D**3/6+(5-2*C1+28*T1-3*C1*C1+8*ep2+24*T1*T1)*D**5/120)/cs;
+  return[lat,lon];
+}
+function toXYZ(lat,lon,el){const a=el[0],e2=el[1]*(2-el[1]),N=a/Math.sqrt(1-e2*Math.sin(lat)**2);return[N*Math.cos(lat)*Math.cos(lon),N*Math.cos(lat)*Math.sin(lon),N*(1-e2)*Math.sin(lat)];}
+function fromXYZ(X,Y,Z,el){const a=el[0],e2=el[1]*(2-el[1]),p=Math.hypot(X,Y);let lat=Math.atan2(Z,p*(1-e2));for(let i=0;i<6;i++){const N=a/Math.sqrt(1-e2*Math.sin(lat)**2);lat=Math.atan2(Z+e2*N*Math.sin(lat),p);}return[lat,Math.atan2(Y,X)];}
+function autoCRS(x,y){return Math.abs(x)<=180&&Math.abs(y)<=90?"geo":(x>100000&&x<900000&&y>=0&&y<=10000000?"utm":"merc");}
+function crsToLL(x,y,o){
+  let c=o.crs||"auto";if(c==="auto")c=autoCRS(x,y);
+  if(c==="geo")return Math.abs(y)<=90&&Math.abs(x)<=180?{lng:x,lat:y}:null;
+  if(c==="merc"){const R=6378137,lng=x/R*180/Math.PI,lat=(2*Math.atan(Math.exp(y/R))-Math.PI/2)*180/Math.PI;return isFinite(lat)&&Math.abs(lat)<=85.06&&Math.abs(lng)<=180?{lng,lat}:null;}
+  const dt=DATUM[c==="utm"?"wgs":c];if(dt===undefined)return null;
+  const el=ELL[dt?dt.e:"wgs"];
+  if(!(x>100000&&x<900000)||y<0||y>10000000)return null;
+  let r=tmInv(x,y,o.zone||38,o.north!==false,el),lat=r[0],lon=r[1];
+  if(dt){const p=toXYZ(lat,lon,el),w=fromXYZ(p[0]+dt.d[0],p[1]+dt.d[1],p[2]+dt.d[2],ELL.wgs);lat=w[0];lon=w[1];}
+  const o2={lng:lon*180/Math.PI,lat:lat*180/Math.PI};
+  return isFinite(o2.lat)&&Math.abs(o2.lat)<=90&&Math.abs(o2.lng)<=180?o2:null;
+}
+function buildAssets(rows,map,o){
+  const assets=[],bad=[],seen={};let dup=0;
+  rows.forEach((r,i)=>{
+    const g=k=>map[k]==null?"":String(r[map[k]]==null?"":r[map[k]]).trim();
+    const x0=coord(g("x")),y0=coord(g("y"));
+    if(!isFinite(x0)||!isFinite(y0)){bad.push({n:i+1,why:"X/Y is not a number"});return;}
+    const ll=crsToLL(x0,y0,o);
+    if(!ll){bad.push({n:i+1,why:"X/Y does not fit the selected coordinate system"});return;}
+    const type=o.typeMode==="fixed"?(String(o.fixedType||"").trim()||"Asset"):normType(g("type"));
+    const pre=type.split(/\s+/).map(w=>w[0]).join("").toUpperCase().slice(0,3);
+    const a={id:g("id")||pre+"-"+String(i+1).padStart(4,"0"),type,x:ll.lng,y:ll.lat,rx:g("x"),ry:g("y"),invert:num(g("invert")),ground:num(g("ground")),size:g("size")||"—"};
+    const c=num(g("covers"));if(isFinite(c))a.covers=c;
+    if(g("shape"))a.shape=g("shape");if(g("dims"))a.dims=g("dims");
+    if(seen[a.id])dup++;seen[a.id]=1;assets.push(a);
+  });
+  return{assets,bad,dup};
+}
+function hav(la1,lo1,la2,lo2){const R=6371008.8,r=Math.PI/180,a=Math.sin((la2-la1)*r/2)**2+Math.cos(la1*r)*Math.cos(la2*r)*Math.sin((lo2-lo1)*r/2)**2;return 2*R*Math.asin(Math.sqrt(a));}
+/* ---- schedule ---- */
+const DAY=864e5;
+function parseDate(s){
+  s=String(s==null?"":s).replace(/[٠-٩]/g,d=>d.charCodeAt(0)-1632).trim();if(!s)return NaN;
+  let m=s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);if(m)return Date.UTC(+m[1],m[2]-1,+m[3]);
+  m=s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})/);if(m)return Date.UTC(+m[3],m[2]-1,+m[1]);
+  if(/^\d{5}(\.\d+)?$/.test(s))return Date.UTC(1899,11,30)+Math.floor(+s)*DAY;
+  return NaN;
+}
+const iso=ms=>new Date(ms).toISOString().slice(0,10);
+const SAL={id:["id","taskid","no"],name:["name","task","taskname","activity","البند"],start:["start","startdate","begin"],end:["end","enddate","finish","finishdate"],progress:["progress","percent","complete","manualprogress"],dep:["dependencies","predecessors","depends"],type:["assettype","type"],action:["action","worktype"],qty:["quantity","qty","target","count"],weight:["weight","cost","value"],ins:["inspectionshare","inspectionweight","inspectionpct","inspection"],mnt:["maintenanceshare","maintenanceweight","maintenancepct","maintenance"]};
+function parseSched(text){
+  const rows=splitCSV(text);if(rows.length<2)return{tasks:[],bad:0,error:"Schedule file is empty"};
+  const hk=rows[0].map(h=>h.toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]/g,"")),c={};
+  for(const k in SAL){const i=hk.findIndex(h=>SAL[k].includes(h));if(i>=0)c[k]=i;}
+  if(c.name==null||c.start==null||c.end==null)return{tasks:[],bad:0,error:"Schedule needs name, start and end columns"};
+  const g=(r,k)=>c[k]==null?"":String(r[c[k]]==null?"":r[c[k]]).trim();
+  const tasks=[],used={};let bad=0;
+  rows.slice(1).forEach((r,i)=>{
+    const s=parseDate(g(r,"start")),e=parseDate(g(r,"end"));
+    if(!g(r,"name")||!isFinite(s)||!isFinite(e)||e<s){bad++;return;}
+    let id=(g(r,"id")||String(i+1)).replace(/[^\w-]/g,"_");while(used[id])id+="_";used[id]=1;
+    const act=g(r,"action").toLowerCase(),type=g(r,"type")?normType(g(r,"type")):"",ia=num(g(r,"ins")),ma=num(g(r,"mnt"));
+    let I=.5,Mn=.5;
+    if(act){I=/maint|صيان/.test(act)?0:1;Mn=1-I;}
+    else if(isFinite(ia)||isFinite(ma)){let a=Math.max(0,isFinite(ia)?ia:100-ma),b=Math.max(0,isFinite(ma)?ma:100-ia);const t=a+b||1;I=a/t;Mn=b/t;}
+    tasks.push({id,name:g(r,"name"),start:s,end:e,manual:Math.max(0,Math.min(100,num(g(r,"progress"))||0)),
+      dep:g(r,"dep").split(/[;,|]/).map(d=>d.trim().replace(/[^\w-]/g,"_")).filter(Boolean),
+      type,ins:I,mnt:Mn,qty:num(g(r,"qty")),weight:num(g(r,"weight"))});
+  });
+  const ids=new Set(tasks.map(t=>t.id));tasks.forEach(t=>t.dep=t.dep.filter(d=>ids.has(d)&&d!==t.id));
+  return{tasks,bad};
+}
+function metrics(tasks,assets,done,today){
+  const cl=v=>Math.max(0,Math.min(1,v)),key=s=>String(s||"").toLowerCase().replace(/\s+/g,"");
+  const out=tasks.map(t=>{
+    const w=t.weight>0?t.weight:(t.end-t.start)/DAY+1,planned=cl((today-t.start+DAY)/(t.end-t.start+DAY))*100;
+    let actual=t.manual,target=null,insN=null,mntN=null,insPct=null,mntPct=null;
+    if(t.type){
+      target=t.qty>0?t.qty:assets.filter(a=>key(a.type)===key(t.type)).length;
+      const cnt=act=>{const ids=new Set(done.filter(d=>key(d.type)===key(t.type)&&d.action===act).map(d=>d.id));return t.qty>0?ids.size:[...ids].filter(id=>assets.some(a=>a.id===id)).length;};
+      insN=cnt("Inspection");mntN=cnt("Maintenance");
+      insPct=target>0?Math.min(100,insN/target*100):0;mntPct=target>0?Math.min(100,mntN/target*100):0;
+      actual=t.ins*insPct+t.mnt*mntPct;
+    }
+    return{...t,w,planned,actual,target,insN,mntN,insPct,mntPct};
+  });
+  const W=out.reduce((s,t)=>s+t.w,0)||1,wa=f=>out.reduce((s,t)=>s+t.w*t[f],0)/W,n=tasks.length;
+  const L=out.filter(t=>t.type),LW=L.reduce((s,t)=>s+t.w,0),la=f=>L.length?L.reduce((s,t)=>s+t.w*t[f],0)/LW:null;
+  const ps=n?Math.min(...tasks.map(t=>t.start)):0,pe=n?Math.max(...tasks.map(t=>t.end)):0;
+  return{tasks:out,start:ps,end:pe,elapsed:n?cl((today-ps+DAY)/(pe-ps+DAY))*100:0,planned:n?wa("planned"):0,actual:n?wa("actual"):0,insAll:la("insPct"),mntAll:la("mntPct")};
+}
+/*PURE-END*/
+const state={demo:false,geo:"idle",tab:"map",asset:null,action:null,verified:false,dist:7,name:"",photos:{before:[],after:[]},slot:null,tasks:[],assets:[],sched:SCHED_DEFAULT,schedName:"Sample schedule",fin:0,done:[]};
+const LS="sg2";
+function save(){try{localStorage.setItem(LS,JSON.stringify({assets:state.assets,sched:state.sched,schedName:state.schedName,fin:state.fin,done:state.done}));}catch(e){}}
+function load(){try{const d=JSON.parse(localStorage.getItem(LS)||"null");if(!d)return;if(Array.isArray(d.assets))state.assets=d.assets;if(typeof d.sched==="string"){state.sched=d.sched;state.schedName=d.schedName||"Saved schedule";}state.fin=+d.fin||0;if(Array.isArray(d.done))state.done=d.done;}catch(e){}}
+const todayMs=()=>{const n=new Date();return Date.UTC(n.getFullYear(),n.getMonth(),n.getDate());};
+let ganttMode="Week";
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt=(v,d=2)=>typeof v==="number"&&isFinite(v)?v.toFixed(d)+" m":"—";
+function toast(m){const t=$("toast");t.textContent=m;t.classList.add("show");clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove("show"),3000);}
+
+/* NAV */
+const NAV=[["map","fa-map-location-dot","Map"],["tasks","fa-list-check","Tasks"],["progress","fa-gauge-high","Progress"],["gantt","fa-chart-gantt","Schedule"],["settings","fa-gear","Settings"]];
+$("nav").innerHTML='<div class="brand"><i class="fa-solid fa-droplet"></i></div>'+NAV.map(n=>`<button data-t="${n[0]}" onclick="go('${n[0]}')"><i class="fa-solid ${n[1]}"></i>${n[2]}</button>`).join("");
+function go(t){
+  state.tab=t;
+  document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.id==="v-"+t));
+  document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("active",b.dataset.t===t));
+  if(t!=="map") closeSheet();
+  if(t==="map") setTimeout(resizeMap,60);
+  if(t==="gantt") renderGantt();
+  if(t==="tasks") renderTasks();
+  if(t==="progress") renderProgress();
+}
+
+/* MAP: own canvas engine (no map library needed) */
+const GEOFENCE=10;
+const MP={lat:24.7134,lng:46.6755,z:17,W:0,H:0,dpr:1,sel:null,raf:0,tiles:new Map(),imgs:new Map(),mode:"sat",src:0,fail:0,ok:0,follow:false,hits:[]};
+const cv=$("map"),cx=cv.getContext("2d"),clampLat=v=>Math.max(-84,Math.min(84,v)),clampZ=v=>Math.max(3,Math.min(21,v));
+const proj=(lat,lng,z)=>{const s=256*2**z,r=Math.sin(lat*Math.PI/180);return{x:(lng+180)/360*s,y:(0.5-Math.log((1+r)/(1-r))/(4*Math.PI))*s};};
+const unproj=(x,y,z)=>{const s=256*2**z,n=Math.PI-2*Math.PI*y/s;return{lat:180/Math.PI*Math.atan(Math.sinh(n)),lng:x/s*360-180};};
+function toScreen(lat,lng){const c=proj(MP.lat,MP.lng,MP.z),p=proj(lat,lng,MP.z);return{x:p.x-c.x+MP.W/2,y:p.y-c.y+MP.H/2};}
+function toLL(sx,sy){const c=proj(MP.lat,MP.lng,MP.z);return unproj(c.x+sx-MP.W/2,c.y+sy-MP.H/2,MP.z);}
+function setView(lat,lng,z){MP.lat=clampLat(lat);MP.lng=lng;if(z!=null)MP.z=clampZ(z);draw();}
+function zoomAt(sx,sy,nz){nz=clampZ(nz);const ll=toLL(sx,sy);MP.z=nz;const p=proj(ll.lat,ll.lng,nz),c=unproj(p.x-(sx-MP.W/2),p.y-(sy-MP.H/2),nz);MP.lat=clampLat(c.lat);MP.lng=c.lng;draw();}
+function panBy(dx,dy){const c=proj(MP.lat,MP.lng,MP.z),n=unproj(c.x-dx,c.y-dy,MP.z);MP.lat=clampLat(n.lat);MP.lng=n.lng;draw();}
+function zoomBtn(d){zoomAt(MP.W/2,MP.H/2,Math.round(MP.z)+d);}
+function fitAll(){
+  const L=state.assets;if(!L.length||!MP.W)return;
+  const la=L.map(a=>a.y),lo=L.map(a=>a.x),mnA=Math.min(...la),mxA=Math.max(...la),mnO=Math.min(...lo),mxO=Math.max(...lo);
+  let z=18;
+  if(mnA!==mxA||mnO!==mxO)for(z=19;z>3;z--){const a=proj(mxA,mnO,z),b=proj(mnA,mxO,z);if(b.x-a.x<=MP.W-120&&b.y-a.y<=MP.H-220)break;}
+  setView((mnA+mxA)/2,(mnO+mxO)/2,z);
+}
+function setFollow(v){MP.follow=v;$("locBtn").classList.toggle("on",v);}
+function locateMe(){
+  if(MP.follow){setFollow(false);return;}
+  const p=curPos(state.asset);if(!p){toast("Location unavailable – tap the GPS label to retry");startGPS();return;}
+  setView(p.lat,p.lng,Math.max(MP.z,18));setFollow(true);
+}
+function resizeMap(){const r=$("mapBox").getBoundingClientRect();if(!r.width||!r.height)return;MP.W=r.width;MP.H=r.height;MP.dpr=Math.min(window.devicePixelRatio||1,3);cv.width=Math.round(r.width*MP.dpr);cv.height=Math.round(r.height*MP.dpr);draw();}
+const G=(l)=>(z,x,y)=>`https://mt${(x+y)%4}.google.com/vt/lyrs=${l}&x=${x}&y=${y}&z=${z}`;
+const ESRI={n:"Esri Satellite",a:"Imagery © Esri, Maxar",max:19,u:(z,x,y)=>`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`};
+const MODES={
+  sat:[{n:"Google Satellite",a:"Imagery © Google",max:20,u:G("s")},ESRI],
+  hyb:[{n:"Google Hybrid",a:"Imagery © Google",max:20,u:G("y")},ESRI],
+  map:[{n:"OpenStreetMap",a:"© OpenStreetMap contributors",max:19,u:(z,x,y)=>`https://${"abc"[(x+y)%3]}.tile.openstreetmap.org/${z}/${x}/${y}.png`},{n:"CARTO",a:"© OpenStreetMap © CARTO",max:20,u:(z,x,y)=>`https://${"abcd"[(x+y)%4]}.basemaps.cartocdn.com/rastertiles/voyager/${z}/${x}/${y}.png`}]
+};
+const MODE_ORDER=["sat","hyb","map"],MODE_NAME={sat:"Satellite",hyb:"Satellite + labels",map:"Street map"};
+const curSrc=()=>MODES[MP.mode][MP.src];
+function badge(off){$("offBadge").classList.toggle("hidden",!off);$("attr").textContent=MP.ok?curSrc().a:"Schematic basemap";}
+function cycleLayer(){MP.mode=MODE_ORDER[(MODE_ORDER.indexOf(MP.mode)+1)%3];MP.src=0;MP.fail=0;MP.ok=0;badge(false);toast("Basemap: "+MODE_NAME[MP.mode]);draw();}
+function offTile(z,x,y){
+  const k=z+"/"+x+"/"+y;let t=MP.tiles.get(k);if(t)return t;
+  if(MP.tiles.size>400)MP.tiles.clear();
+  t=document.createElement("canvas");t.width=t.height=256;
+  const g=t.getContext("2d"),ox=x*256,oy=y*256,C=128,m=v=>((v%4)+4)%4;
+  const h=(a,b)=>{let n=Math.imul(a,374761393)^Math.imul(b,668265263);n=Math.imul(n^(n>>>13),1274126177);return((n^(n>>>16))>>>0)/4294967295;};
+  g.fillStyle="#fff";g.fillRect(0,0,256,256);
+  for(let i=Math.floor(ox/C);i<=Math.floor((ox+255)/C);i++)for(let j=Math.floor(oy/C);j<=Math.floor((oy+255)/C);j++){
+    const r=h(i,j),px=i*C-ox,py=j*C-oy,l=m(i)===0?17:9,rr=m(i+1)===0?17:9,tp=m(j)===0?17:9,bt=m(j+1)===0?17:9;
+    g.fillStyle=r<.12?"#cfe6c9":r<.2?"#d3e3f1":"#eef0f3";g.fillRect(px+l,py+tp,C-l-rr,C-tp-bt);
+    if(r>=.2){g.fillStyle="#dfe3e8";for(let k=0;k<4;k++){g.fillRect(px+l+4+(k%2)*((C-l-rr)/2-2),py+tp+4+(k>>1)*((C-tp-bt)/2-2),(C-l-rr)/2-10,(C-tp-bt)/2-10+h(i*7+k,j*3+k)*4);}}
+  }
+  g.fillStyle="#fde9b8";
+  for(let i=Math.floor(ox/C);i<=Math.floor((ox+255)/C);i++)if(m(i)===0)g.fillRect(i*C-ox-2,0,4,256);
+  for(let j=Math.floor(oy/C);j<=Math.floor((oy+255)/C);j++)if(m(j)===0)g.fillRect(0,j*C-oy-2,256,4);
+  MP.tiles.set(k,t);return t;
+}
+function onTile(z,x,y){
+  const k=MP.mode+MP.src+"/"+z+"/"+x+"/"+y;let e=MP.imgs.get(k);if(e)return e.ok?e.img:null;
+  if(MP.imgs.size>800)MP.imgs.clear();
+  const src=curSrc(),img=new Image();e={img,ok:false};MP.imgs.set(k,e);
+  img.onload=()=>{e.ok=true;MP.ok++;badge(false);draw();};
+  img.onerror=()=>{if(++MP.fail===6&&MP.ok===0){if(MP.src<MODES[MP.mode].length-1){MP.src++;MP.fail=0;draw();}else badge(true);}};
+  img.src=src.u(z,x,y);return null;
+}
+function pin(x,y,col,sel){
+  const r=sel?15:12,cy=y-r-8;cx.save();cx.shadowColor="rgba(0,0,0,.35)";cx.shadowBlur=6;cx.shadowOffsetY=2;
+  cx.beginPath();cx.arc(x,cy,r,Math.PI*.82,Math.PI*2.18);cx.lineTo(x,y);cx.closePath();cx.fillStyle=col;cx.fill();
+  cx.shadowColor="transparent";cx.lineWidth=2.5;cx.strokeStyle="#fff";cx.stroke();
+  cx.beginPath();cx.arc(x,cy,r*.38,0,7);cx.fillStyle="#fff";cx.fill();cx.restore();
+}
+function render(){
+  const W=MP.W,H=MP.H;if(!W||!H)return;
+  cx.setTransform(MP.dpr,0,0,MP.dpr,0,0);cx.fillStyle="#e9eef3";cx.fillRect(0,0,W,H);
+  const Z=Math.max(1,Math.min(curSrc().max,Math.round(MP.z))),s=2**(MP.z-Z),c=proj(MP.lat,MP.lng,Z),n=2**Z,ts=256*s+.6;
+  for(let ty=Math.floor((c.y-H/2/s)/256);ty<=Math.floor((c.y+H/2/s)/256);ty++){
+    if(ty<0||ty>=n)continue;
+    for(let tx=Math.floor((c.x-W/2/s)/256);tx<=Math.floor((c.x+W/2/s)/256);tx++){
+      const w=((tx%n)+n)%n,sx=(tx*256-c.x)*s+W/2,sy=(ty*256-c.y)*s+H/2;
+      cx.drawImage(offTile(Z,w,ty),sx,sy,ts,ts);const im=onTile(Z,w,ty);if(im)cx.drawImage(im,sx,sy,ts,ts);
+    }
+  }
+  const mpp=40075016.686*Math.cos(MP.lat*Math.PI/180)/(256*2**MP.z);
+  if(MP.sel){const p=toScreen(MP.sel.y,MP.sel.x);cx.beginPath();cx.arc(p.x,p.y,GEOFENCE/mpp,0,7);cx.fillStyle="rgba(37,99,235,.12)";cx.fill();cx.setLineDash([6,5]);cx.strokeStyle="#2563eb";cx.lineWidth=1.5;cx.stroke();cx.setLineDash([]);}
+  const me=curPos(MP.sel);
+  if(me){const p=toScreen(me.lat,me.lng),r=(me.acc||0)/mpp;if(r>10){cx.beginPath();cx.arc(p.x,p.y,r,0,7);cx.fillStyle="rgba(59,130,246,.10)";cx.fill();}
+    if(geo.head!=null&&!state.demo){cx.save();cx.translate(p.x,p.y);cx.rotate(geo.head*Math.PI/180);cx.beginPath();cx.moveTo(0,-22);cx.lineTo(8,-10);cx.lineTo(-8,-10);cx.closePath();cx.fillStyle="#2563eb";cx.fill();cx.restore();}
+    cx.beginPath();cx.arc(p.x,p.y,9,0,7);cx.fillStyle="#fff";cx.fill();cx.beginPath();cx.arc(p.x,p.y,6,0,7);cx.fillStyle="#2563eb";cx.fill();}
+  MP.hits=[];const vis=[],lab=MP.z>=16.5&&state.assets.length<=200;
+  state.assets.forEach(a=>{const p=toScreen(a.y,a.x);if(p.x>-30&&p.x<W+30&&p.y>-50&&p.y<H+30)vis.push([a,p]);});
+  vis.sort((u,v)=>(u[0]===MP.sel)-(v[0]===MP.sel));
+  vis.forEach(([a,p])=>{
+    pin(p.x,p.y,typeStyle(a.type).color,a===MP.sel);MP.hits.push({a,x:p.x,y:p.y-20});
+    if(lab){cx.font="bold 10px Arial";cx.textAlign="center";const sat=MP.mode!=="map";cx.lineWidth=3;cx.strokeStyle=sat?"#000":"#fff";cx.strokeText(a.id,p.x,p.y+12);cx.fillStyle=sat?"#fff":"#0f172a";cx.fillText(a.id,p.x,p.y+12);}
+  });
+}
+function draw(){if(MP.raf)return;MP.raf=requestAnimationFrame(()=>{MP.raf=0;render();});}
+function tap(x,y){
+  let best=null,bd=28;
+  for(let i=MP.hits.length-1;i>=0;i--){const h=MP.hits[i],d=Math.hypot(h.x-x,h.y-y);if(d<bd){bd=d;best=h.a;}}
+  if(best)openAsset(best);
+}
+function initMap(){
+  const ptrs=new Map();let drag=null,pinch=0;
+  const pd=()=>{const v=[...ptrs.values()];return{d:Math.hypot(v[0].x-v[1].x,v[0].y-v[1].y),x:(v[0].x+v[1].x)/2,y:(v[0].y+v[1].y)/2};};
+  cv.addEventListener("pointerdown",e=>{try{cv.setPointerCapture(e.pointerId);}catch(_){}ptrs.set(e.pointerId,{x:e.offsetX,y:e.offsetY});drag={x:e.offsetX,y:e.offsetY,moved:0};if(ptrs.size===2){pinch=pd().d;drag=null;}});
+  cv.addEventListener("pointermove",e=>{
+    if(!ptrs.has(e.pointerId))return;ptrs.set(e.pointerId,{x:e.offsetX,y:e.offsetY});
+    if(ptrs.size===2&&pinch){const p=pd();zoomAt(p.x,p.y,MP.z+Math.log2(p.d/pinch));pinch=p.d;}
+    else if(drag){const dx=e.offsetX-drag.x,dy=e.offsetY-drag.y;drag.moved+=Math.abs(dx)+Math.abs(dy);drag.x=e.offsetX;drag.y=e.offsetY;if(drag.moved>12&&MP.follow)setFollow(false);panBy(dx,dy);}
+  });
+  const up=e=>{if(drag&&e.type==="pointerup"&&drag.moved<8)tap(e.offsetX,e.offsetY);ptrs.delete(e.pointerId);if(ptrs.size<2)pinch=0;drag=null;};
+  cv.addEventListener("pointerup",up);cv.addEventListener("pointercancel",up);
+  cv.addEventListener("wheel",e=>{e.preventDefault();zoomAt(e.offsetX,e.offsetY,MP.z-e.deltaY*(e.ctrlKey?.01:.0015));},{passive:false});
+  cv.addEventListener("dblclick",e=>zoomAt(e.offsetX,e.offsetY,MP.z+1));
+  new ResizeObserver(resizeMap).observe($("mapBox"));window.addEventListener("resize",resizeMap);
+  resizeMap();badge(false);
+}
+function setAssets(list,fit){
+  state.assets=list;closeSheet();$("cnt").textContent=list.length;$("empty").classList.toggle("hidden",list.length>0);
+  $("legend").innerHTML=[...new Set(list.map(a=>a.type))].map(k=>`<div class="bg-white/95 rounded-full shadow px-2.5 py-1 text-[10px] font-semibold text-slate-600 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full" style="background:${typeStyle(k).color}"></span>${esc(k)}</div>`).join("");
+  if(fit)fitAll();draw();save();
+}
+function twoStep(id,label,fn){
+  const b=$(id);
+  if(b.dataset.arm){clearTimeout(+b.dataset.arm);delete b.dataset.arm;b.innerHTML=label;fn();return;}
+  b.innerHTML='<i class="fa-solid fa-triangle-exclamation mr-1"></i>Tap again to confirm';
+  b.dataset.arm=setTimeout(()=>{delete b.dataset.arm;b.innerHTML=label;},4000);
+}
+function clearAssets(){twoStep("delBtn",'<i class="fa-solid fa-trash mr-1"></i>Delete all assets',()=>{setAssets([],false);toast("All assets deleted");});}
+function clearRecords(){twoStep("recBtn",'<i class="fa-solid fa-eraser mr-1"></i>Clear field records',()=>{state.done=[];state.tasks=[];save();toast("Field records cleared");});}
+
+/* GPS + geofence */
+const geo={me:null,acc:null,status:"init",id:null};
+function curPos(a){if(state.demo&&a)return{lat:a.y+7/111320,lng:a.x,acc:5};return geo.me?{lat:geo.me.lat,lng:geo.me.lng,acc:geo.acc}:null;}
+function gpsChip(){
+  const e=$("gps");let t,c;
+  if(state.demo){t="Demo GPS";c="text-amber-600";}
+  else if(geo.status==="ok"){const w=geo.acc>30;t="GPS ±"+Math.round(geo.acc)+" m"+(w?" · weak":"");c=w?"text-amber-600":"text-emerald-600";}
+  else if(geo.status==="denied"){t="GPS denied · tap to retry";c="text-rose-600";}
+  else if(geo.status==="off"){t="No GPS · tap to retry";c="text-rose-600";}
+  else{t="Locating…";c="text-slate-500";}
+  e.textContent=t;e.className="font-semibold cursor-pointer "+c;
+}
+function startGPS(){
+  if(!navigator.geolocation){geo.status="off";gpsChip();return;}
+  if(geo.id!=null)navigator.geolocation.clearWatch(geo.id);
+  if(!geo.me)geo.status="init";gpsChip();
+  const er=e=>{if(e.code===1)geo.status="denied";else if(!geo.me)geo.status="off";gpsChip();draw();};
+  if(!geo.me)navigator.geolocation.getCurrentPosition(onPos,()=>{},{enableHighAccuracy:false,timeout:8000,maximumAge:60000});
+  geo.id=navigator.geolocation.watchPosition(onPos,er,{enableHighAccuracy:true,maximumAge:1000,timeout:25000});
+}
+function onPos(p){
+  const first=!geo.me,c=p.coords;
+  if(!first&&c.accuracy>150&&geo.acc<50)return;
+  geo.me={lat:c.latitude,lng:c.longitude};geo.acc=c.accuracy;geo.status="ok";
+  geo.head=(c.heading!=null&&isFinite(c.heading)&&c.speed>0.8)?c.heading:null;
+  if(!state.assets.length&&(first||(!geo.fine&&c.accuracy<=100)))setView(geo.me.lat,geo.me.lng,Math.max(MP.z,18));
+  else if(MP.follow)setView(geo.me.lat,geo.me.lng);
+  if(c.accuracy<=100)geo.fine=true;
+  gpsChip();live();draw();
+}
+function checkRange(a){const p=curPos(a);if(!p)return{ok:false,nogps:true};const d=hav(p.lat,p.lng,a.y,a.x);return{ok:d<=GEOFENCE,d,acc:p.acc};}
+function gate(){
+  if(!state.asset)return false;const r=checkRange(state.asset);if(r.ok)return true;
+  state.verified=false;state.geo=r.nogps?"nogps":"far";state.dist=r.d;closeCam();$("preview").classList.remove("open");renderSheet();
+  toast(r.nogps?"Location unavailable – action blocked":`Out of range (${Math.round(r.d)} m) – action blocked`);return false;
+}
+function live(){
+  if(!state.asset||!$("sheet").classList.contains("open"))return;
+  const r=checkRange(state.asset);
+  if(state.geo==="ok"&&!r.ok&&!r.nogps)gate();
+  else if(state.geo==="far"&&r.d!=null){const e=$("farD");if(e)e.textContent=Math.round(r.d);}
+}
+
+/* CSV IMPORT WIZARD (preview + manual mapping + coordinate system) */
+const imp={};
+const CRS_LIST=[["auto","Auto-detect"],["geo","Geographic WGS84 (lon/lat, decimal or DMS)"],["utm","UTM · WGS84 / NAD83 / ETRS89"],["aea","UTM · Ain el Abd 1970 (Saudi / Gulf)"],["ed50","UTM · ED50"],["merc","Web Mercator (EPSG:3857)"]];
+function dl(name,text){
+  try{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["\uFEFF"+text],{type:"text/csv"}));a.download=name;document.body.appendChild(a);a.click();a.remove();}
+  catch(e){toast("Download not available in this viewer");}
+}
+const downloadTemplate=()=>dl("assets_template.csv",TEMPLATE),downloadSched=()=>dl("schedule_template.csv",SCHED_DEFAULT);
+function readText(f,cb){if(!f)return;const fr=new FileReader();fr.onload=()=>cb(fr.result,f.name);fr.onerror=()=>toast("Could not read the file");fr.readAsText(f,"utf-8");}
+const readSched=f=>readText(f,loadSched);
+function csvOut(heads,rows){const q=v=>{v=String(v==null?"":v);return/[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};return[heads,...rows].map(r=>r.map(q).join(",")).join("\n");}
+function kmlToTable(xml){
+  const doc=new DOMParser().parseFromString(xml,"application/xml");
+  if(doc.getElementsByTagName("parsererror").length)throw new Error("Invalid KML file");
+  const all=[...doc.getElementsByTagName("*")],ln=(e,n)=>e.localName===n,kids=(e,n)=>[...e.children].filter(c=>ln(c,n));
+  const BASE=["Name","Folder","Geometry","Longitude","Latitude"],keys=[],recs=[];
+  all.filter(e=>ln(e,"Placemark")).forEach(pm=>{
+    const desc=[...pm.getElementsByTagName("*")],co=desc.find(e=>ln(e,"coordinates"));if(!co)return;
+    const pts=co.textContent.trim().split(/\s+/).map(t=>t.split(",").map(Number)).filter(a=>isFinite(a[0])&&isFinite(a[1]));if(!pts.length)return;
+    const poly=desc.some(e=>ln(e,"Polygon")),line=desc.some(e=>ln(e,"LineString"));
+    let lon,lat;
+    if(poly){const q=pts.length>1?pts.slice(0,-1):pts;lon=q.reduce((s,a)=>s+a[0],0)/q.length;lat=q.reduce((s,a)=>s+a[1],0)/q.length;}
+    else{const m=pts[Math.floor(pts.length/2)];lon=m[0];lat=m[1];}
+    const a={Name:(kids(pm,"name")[0]||{textContent:""}).textContent.trim(),Folder:"",Geometry:poly?"Polygon":line?"Line":"Point",Longitude:lon,Latitude:lat};
+    for(let p=pm.parentElement;p;p=p.parentElement){if(ln(p,"Folder")||ln(p,"Document")){const n=kids(p,"name")[0];if(n&&n.textContent.trim()){a.Folder=n.textContent.trim();break;}}}
+    const put=(k,v)=>{k=String(k||"").trim();if(!k)return;if(BASE.includes(k))k+=" (data)";if(!(k in a)){a[k]=String(v==null?"":v).trim();if(!keys.includes(k))keys.push(k);}};
+    desc.forEach(e=>{if(ln(e,"Data")){const v=kids(e,"value")[0];put(e.getAttribute("name"),v?v.textContent:e.textContent);}else if(ln(e,"SimpleData"))put(e.getAttribute("name"),e.textContent);});
+    const d=kids(pm,"description")[0];
+    if(d){const h=new DOMParser().parseFromString(d.textContent,"text/html");let found=false;
+      h.querySelectorAll("tr").forEach(tr=>{const c=tr.querySelectorAll("td,th");if(c.length===2&&c[0].textContent.trim()){put(c[0].textContent,c[1].textContent);found=true;}});
+      if(!found&&h.body.textContent.trim())put("Description",h.body.textContent.trim().slice(0,200));}
+    recs.push(a);
+  });
+  const heads=[...BASE,...keys];
+  return{heads,rows:recs.map(a=>heads.map(k=>a[k]==null?"":a[k]))};
+}
+async function kmzToKml(buf){
+  const dv=new DataView(buf),u8=new Uint8Array(buf);let e=-1;
+  for(let i=u8.length-22;i>=Math.max(0,u8.length-65557);i--)if(dv.getUint32(i,true)===0x06054b50){e=i;break;}
+  if(e<0)throw new Error("Not a valid KMZ (zip) file");
+  const n=dv.getUint16(e+10,true);let p=dv.getUint32(e+16,true),best=null;
+  for(let i=0;i<n;i++){
+    if(dv.getUint32(p,true)!==0x02014b50)break;
+    const method=dv.getUint16(p+10,true),csz=dv.getUint32(p+20,true),nl=dv.getUint16(p+28,true),el=dv.getUint16(p+30,true),cl=dv.getUint16(p+32,true),lo=dv.getUint32(p+42,true);
+    const name=new TextDecoder().decode(u8.subarray(p+46,p+46+nl));
+    if(/\.kml$/i.test(name)&&(!best||/(^|\/)doc\.kml$/i.test(name)))best={method,csz,lo};
+    p+=46+nl+el+cl;
+  }
+  if(!best)throw new Error("No .kml file found inside the KMZ");
+  const ds=best.lo+30+dv.getUint16(best.lo+26,true)+dv.getUint16(best.lo+28,true),data=u8.subarray(ds,ds+best.csz);
+  if(best.method===0)return new TextDecoder().decode(data);
+  if(best.method!==8)throw new Error("Unsupported KMZ compression");
+  if(typeof DecompressionStream==="undefined")throw new Error("This browser cannot open KMZ – use KML or update the browser");
+  const out=await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer();
+  return new TextDecoder().decode(out);
+}
+async function readFile(f){
+  if(!f)return;
+  try{
+    const ext=(f.name.split(".").pop()||"").toLowerCase(),buf=await f.arrayBuffer(),u8=new Uint8Array(buf);
+    let text,kml=false;
+    if(ext==="kmz"||(u8[0]===0x50&&u8[1]===0x4b)){text=await kmzToKml(buf);kml=true;}
+    else{text=new TextDecoder("utf-8").decode(buf);kml=ext==="kml"||/^\s*(<\?xml|<kml)/i.test(text)&&/<kml/i.test(text);}
+    if(!kml)return openImport(text,f.name);
+    const t=kmlToTable(text);
+    if(!t.rows.length)return toast("No placemarks with coordinates found in the file");
+    openImport(csvOut(t.heads,t.rows),f.name,{crs:"geo",delim:",",note:(ext==="kmz"?"KMZ":"KML")+" · "+t.rows.length+" placemarks"});
+  }catch(err){toast(err.message||"Could not read the file");}
+}
+$("csvIn").addEventListener("change",e=>{readFile(e.target.files[0]);e.target.value="";});
+$("schedIn").addEventListener("change",e=>{readSched(e.target.files[0]);e.target.value="";});
+["dragover","drop"].forEach(ev=>document.addEventListener(ev,e=>{e.preventDefault();if(ev==="drop"){const f=e.dataTransfer.files[0];state.tab==="gantt"?readSched(f):readFile(f);}}));
+function defaultZone(){return geo.me?Math.floor((geo.me.lng+180)/6)+1:38;}
+function crsLabel(c,o){return c==="geo"?"Geographic WGS84":c==="merc"?"Web Mercator":(c==="aea"?"Ain el Abd 1970 UTM ":c==="ed50"?"ED50 UTM ":"WGS84 UTM ")+o.zone+(o.north?"N":"S");}
+function openImport(text,name,o){
+  o=o||{};
+  Object.assign(imp,{text,name,note:o.note||"",delim:o.delim||"auto",hdr:true,typeMode:"column",fixedType:"Manhole",custom:false,mode:"replace",crs:o.crs||"auto",zone:defaultZone(),north:!geo.me||geo.me.lat>=0});
+  parseImp();$("imp").classList.add("open");renderImp();
+}
+function parseImp(){
+  imp.d=imp.delim==="auto"?detectDelim(imp.text):imp.delim;
+  const all=splitCSV(imp.text,imp.d);
+  imp.heads=(all[0]||[]).map((h,i)=>imp.hdr&&h.trim()?h.trim():"Column "+(i+1));
+  imp.rows=imp.hdr?all.slice(1):all;
+  imp.map=imp.hdr?guessMap(imp.heads):{};
+  imp.typeMode=imp.map.type==null?"fixed":"column";
+}
+function impSet(k,v){if(v==="")delete imp.map[k];else imp.map[k]=+v;impSummary();}
+function impType(v){if(v==="__c"){imp.custom=true;imp.fixedType="";}else{imp.custom=false;imp.fixedType=v;}renderImp();}
+function impSwap(){const x=imp.map.x,y=imp.map.y;if(y==null)delete imp.map.x;else imp.map.x=y;if(x==null)delete imp.map.y;else imp.map.y=x;renderImp();}
+function impClose(){$("imp").classList.remove("open");}
+const SEL="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm";
+function colOpts(k){return'<option value="">— not in file —</option>'+imp.heads.map((h,i)=>`<option value="${i}" ${imp.map[k]===i?"selected":""}>${esc(h)} · ${colKind(imp.rows,i)}</option>`).join("");}
+function renderImp(){
+  const raw=`<table class="text-[11px] w-full"><thead><tr>${imp.heads.map(h=>`<th class="text-left px-2 py-1 bg-slate-100 whitespace-nowrap">${esc(h)}</th>`).join("")}</tr></thead><tbody>${imp.rows.slice(0,5).map(r=>`<tr>${imp.heads.map((_,i)=>`<td class="px-2 py-1 border-t border-slate-100 whitespace-nowrap">${esc(r[i]||"")}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  const grid=FIELDS.map(([k,l,isNum])=>{
+    if(k==="type")return`<div class="bg-slate-50 rounded-xl p-3 md:col-span-2"><div class="text-xs font-semibold text-slate-600 mb-1">Type <span class="text-slate-400">· Text</span></div><div class="grid gap-2 md:grid-cols-3">
+      <select class="${SEL}" onchange="imp.typeMode=this.value;renderImp()"><option value="column" ${imp.typeMode==="column"?"selected":""}>Read from a column</option><option value="fixed" ${imp.typeMode==="fixed"?"selected":""}>Same type for all rows</option></select>
+      ${imp.typeMode==="column"?`<select class="${SEL}" onchange="impSet('type',this.value)">${colOpts("type")}</select>`
+      :`<select class="${SEL}" onchange="impType(this.value)">${Object.keys(TYPES).map(t=>`<option ${!imp.custom&&imp.fixedType===t?"selected":""}>${t}</option>`).join("")}<option value="__c" ${imp.custom?"selected":""}>Custom…</option></select>${imp.custom?`<input type="text" value="${esc(imp.fixedType)}" oninput="imp.fixedType=this.value;impSummary()" placeholder="Type name" class="${SEL}">`:""}`}</div></div>`;
+    return`<div class="bg-slate-50 rounded-xl p-3"><div class="text-xs font-semibold text-slate-600 mb-1">${l}${k==="x"||k==="y"?" *":""} <span class="text-slate-400">· ${isNum?"Number":"Text"}</span></div><select class="${SEL}" onchange="impSet('${k}',this.value)">${colOpts(k)}</select></div>`;
+  }).join("");
+  const utm=imp.crs!=="geo"&&imp.crs!=="merc";
+  $("impBox").innerHTML=`<div class="flex items-start justify-between mb-3"><div class="min-w-0"><div class="text-lg font-bold text-slate-800">Import preview</div><div class="text-xs text-slate-500 truncate">${esc(imp.name)} · ${imp.note?esc(imp.note)+" · ":""}${imp.rows.length} rows · ${imp.heads.length} columns</div></div>
+    <button onclick="impClose()" aria-label="Close" class="w-9 h-9 rounded-full bg-slate-100 text-slate-500"><i class="fa-solid fa-xmark"></i></button></div>
+    <div class="grid gap-2 grid-cols-2 md:grid-cols-3 mb-3">
+      <label class="text-xs text-slate-500">Delimiter<select class="${SEL}" onchange="imp.delim=this.value;parseImp();renderImp()"><option value="auto" ${imp.delim==="auto"?"selected":""}>Auto (${imp.d==="\t"?"tab":imp.d})</option><option value="," ${imp.delim===","?"selected":""}>Comma ,</option><option value=";" ${imp.delim===";"?"selected":""}>Semicolon ;</option><option value="\t" ${imp.delim==="\t"?"selected":""}>Tab</option></select></label>
+      <label class="text-xs text-slate-500">Existing assets<select class="${SEL}" onchange="imp.mode=this.value"><option value="replace" ${imp.mode==="replace"?"selected":""}>Replace</option><option value="append" ${imp.mode==="append"?"selected":""}>Append</option></select></label>
+      <label class="text-sm text-slate-700 flex items-end gap-2 pb-2 col-span-2 md:col-span-1"><input type="checkbox" class="w-5 h-5" ${imp.hdr?"checked":""} onchange="imp.hdr=this.checked;parseImp();renderImp()">First row is a header</label></div>
+    <div class="grid gap-2 grid-cols-2 md:grid-cols-4 mb-3">
+      <label class="text-xs text-slate-500 col-span-2">Coordinate system<select class="${SEL}" onchange="imp.crs=this.value;renderImp()">${CRS_LIST.map(c=>`<option value="${c[0]}" ${imp.crs===c[0]?"selected":""}>${c[1]}</option>`).join("")}</select></label>
+      ${utm?`<label class="text-xs text-slate-500">UTM zone<select class="${SEL}" onchange="imp.zone=+this.value;impSummary()">${Array.from({length:60},(_,i)=>`<option ${imp.zone===i+1?"selected":""}>${i+1}</option>`).join("")}</select></label>
+      <label class="text-xs text-slate-500">Hemisphere<select class="${SEL}" onchange="imp.north=this.value==='N';impSummary()"><option value="N" ${imp.north?"selected":""}>North</option><option value="S" ${imp.north?"":"selected"}>South</option></select></label>`:""}</div>
+    <div class="text-xs font-semibold text-slate-600 mb-1">File preview (first 5 rows)</div>
+    <div class="overflow-auto max-h-40 rounded-xl border border-slate-200 mb-3">${raw}</div>
+    <div class="text-xs font-semibold text-slate-600 mb-1">Map columns to fields</div>
+    <div class="grid gap-2 md:grid-cols-2 mb-3">${grid}</div><div id="impSum"></div>`;
+  impSummary();
+}
+function impSummary(){
+  const r=buildAssets(imp.rows,imp.map,imp),need=imp.map.x==null||imp.map.y==null,ok=!need&&r.assets.length>0;
+  const warn=FIELDS.filter(f=>f[2]&&f[0]!=="x"&&f[0]!=="y"&&imp.map[f[0]]!=null&&colKind(imp.rows,imp.map[f[0]])==="Text").map(f=>`${f[1]} column contains text`);
+  if(r.dup)warn.push(`${r.dup} duplicate Asset IDs`);
+  let det="";
+  if(ok){const a=r.assets[0],c=imp.crs==="auto"?autoCRS(coord(a.rx),coord(a.ry)):imp.crs;det=`${imp.crs==="auto"?"Detected":"Using"}: ${crsLabel(c,imp)}`;
+    if(geo.me){const km=hav(geo.me.lat,geo.me.lng,a.y,a.x)/1000;det+=` · first point is ${km<1?Math.round(km*1000)+" m":km.toFixed(1)+" km"} from you`;}}
+  const list=r.assets.slice(0,4).map(a=>`<div class="flex justify-between gap-2 text-[11px] py-1 border-t border-slate-100"><b class="truncate">${esc(a.id)}</b><span>${esc(a.type)}</span><span class="truncate">${esc(a.rx)}, ${esc(a.ry)} → ${a.y.toFixed(5)}, ${a.x.toFixed(5)}</span></div>`).join("");
+  $("impSum").innerHTML=`<div class="rounded-xl border ${ok?"border-emerald-200 bg-emerald-50":"border-rose-200 bg-rose-50"} p-3 mb-3">
+    <div class="text-sm font-semibold ${ok?"text-emerald-800":"text-rose-800"}">${need?"Choose the X and Y columns":`${r.assets.length} valid · ${r.bad.length} invalid`}</div>
+    ${det?`<div class="text-[11px] text-emerald-700 mt-1">${esc(det)}</div>`:""}
+    ${r.bad.length?`<div class="text-[11px] text-rose-700 mt-1">Row ${r.bad[0].n}: ${r.bad[0].why}${r.bad.length>1?` (+${r.bad.length-1} more)`:""}</div>`:""}
+    ${warn.map(w=>`<div class="text-[11px] text-amber-700 mt-1"><i class="fa-solid fa-triangle-exclamation mr-1"></i>${esc(w)}</div>`).join("")}${list?`<div class="mt-2">${list}</div>`:""}</div>
+    <div class="flex gap-2"><button onclick="impSwap()" class="px-3 py-3 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold" title="Swap X and Y"><i class="fa-solid fa-right-left"></i></button>
+    <button onclick="impClose()" class="flex-1 py-3 rounded-xl bg-slate-100 text-slate-700 font-semibold text-sm">Cancel</button>
+    <button onclick="impConfirm()" ${ok?"":"disabled"} class="flex-1 py-3 rounded-xl bg-blue-700 text-white font-semibold text-sm ${ok?"":"opacity-40"}">Confirm &amp; Plot</button></div>`;
+}
+function impConfirm(){
+  const r=buildAssets(imp.rows,imp.map,imp);if(!r.assets.length)return;
+  const list=imp.mode==="append"?state.assets.concat(r.assets):r.assets;
+  impClose();setAssets(list,true);go("map");
+  toast(`Plotted ${r.assets.length} assets`+(r.bad.length?` · ${r.bad.length} skipped`:""));
+}
+
+/* ASSET SHEET */
+function openAsset(a){
+  Object.assign(state,{asset:a,action:null,verified:false,geo:"idle",name:"",photos:{before:[],after:[]}});
+  MP.sel=a;MP.z=Math.max(MP.z,18);
+  const wide=innerWidth>=768,sx=(MP.W-(wide?410:0))/2,sy=wide?MP.H/2:MP.H*.28,c=proj(a.y,a.x,MP.z),n=unproj(c.x-(sx-MP.W/2),c.y-(sy-MP.H/2),MP.z);
+  setView(n.lat,n.lng);renderSheet();$("sheet").classList.add("open");
+}
+function closeSheet(){$("sheet").classList.remove("open");MP.sel=null;state.geo="idle";draw();}
+function cell(k,v){return `<div class="bg-slate-50 rounded-xl p-3"><div class="text-[10px] uppercase tracking-wide text-slate-400">${k}</div><div class="text-sm font-semibold text-slate-800 break-words">${esc(v)}</div></div>`;}
+function renderSheet(stage){
+  const a=state.asset,T=typeStyle(a.type);let extra="";
+  if(a.covers!=null) extra+=cell("Number of Covers",a.covers);
+  if(a.shape) extra+=cell("Shape",a.shape);
+  if(a.dims) extra+=cell("Dimensions",a.dims);
+  let h=`<div class="p-5 fade">
+    <div class="w-10 h-1.5 bg-slate-200 rounded-full mx-auto mb-4 md:hidden"></div>
+    <div class="flex items-center gap-3 mb-4">
+      <div class="w-12 h-12 rounded-2xl text-white flex items-center justify-center text-lg shrink-0" style="background:${T.color}"><i class="fa-solid ${T.icon}"></i></div>
+      <div class="flex-1 min-w-0"><div class="text-lg font-bold text-slate-800 truncate">${esc(a.id)}</div><div class="text-xs text-slate-500">${esc(a.type)}</div></div>
+      <button onclick="closeSheet()" aria-label="Close" class="w-9 h-9 rounded-full bg-slate-100 text-slate-500"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="grid grid-cols-2 gap-2 mb-4">
+      ${cell("X Coordinate",a.rx!=null?a.rx:a.x)}${cell("Y Coordinate",a.ry!=null?a.ry:a.y)}
+      ${cell("Invert Level",fmt(a.invert))}${cell("Ground Level",fmt(a.ground))}
+      ${cell("Size",a.size)}${cell("Type",a.type)}${extra}
+    </div>`;
+  if(stage==="verifying"){
+    h+=`<div class="rounded-2xl bg-blue-50 p-5 text-center"><i class="fa-solid fa-circle-notch spin text-3xl text-blue-700"></i><div class="mt-2 font-semibold text-blue-900">Verifying Location...</div><div class="text-xs text-blue-600">Comparing GPS with asset coordinates</div></div>`;
+  }else if(state.geo==="far"||state.geo==="nogps"){
+    const msg=state.geo==="far"?`You are <b id="farD">${Math.round(state.dist)}</b> m from this asset. Move within ${GEOFENCE} m to continue.`:(geo.status==="denied"?"Location permission was denied. Allow location access in the browser, or enable Demo GPS in Settings.":"No GPS fix yet. Make sure location is on (HTTPS or file), or enable Demo GPS in Settings.");
+    h+=`<div class="rounded-2xl bg-rose-50 border border-rose-200 p-4 fade"><div class="flex gap-3"><i class="fa-solid fa-ban text-rose-600 text-xl mt-0.5"></i><div><div class="font-semibold text-rose-800 text-sm">Action blocked</div><div class="text-xs text-rose-700">${msg}</div></div></div><button onclick="${state.geo==="nogps"?"startGPS();":""}startAction()" class="mt-3 w-full py-3 rounded-xl bg-rose-600 text-white font-semibold text-sm">Re-check location</button></div>`;
+  }else if(!state.verified){
+    h+=`<button onclick="startAction()" class="w-full py-4 rounded-2xl bg-blue-800 text-white font-bold shadow-lg active:scale-[.98] transition"><i class="fa-solid fa-location-crosshairs mr-2"></i>Start Action</button>`;
+  }else{
+    h+=`<div class="rounded-2xl bg-emerald-50 border border-emerald-200 p-3 flex items-start gap-3 mb-3 fade"><i class="fa-solid fa-circle-check text-emerald-600 text-xl mt-0.5"></i><div><div class="font-semibold text-emerald-800 text-sm">Location Verified</div><div class="text-xs text-emerald-700">You are within ${Math.max(1,Math.ceil(state.dist))} meters of the asset.</div></div></div>`;
+    h+=state.action?formHtml():`<div class="grid grid-cols-2 gap-3">
+      <button onclick="pick('Inspection')" class="py-4 rounded-2xl bg-blue-700 text-white font-semibold shadow"><i class="fa-solid fa-magnifying-glass block text-xl mb-1"></i>Inspection</button>
+      <button onclick="pick('Maintenance')" class="py-4 rounded-2xl bg-amber-500 text-white font-semibold shadow"><i class="fa-solid fa-screwdriver-wrench block text-xl mb-1"></i>Maintenance</button></div>`;
+  }
+  $("sheet").innerHTML=h+"</div>";
+}
+function startAction(){
+  state.geo="checking";state.verified=false;renderSheet("verifying");
+  setTimeout(()=>{const r=checkRange(state.asset);state.dist=r.d;state.geo=r.nogps?"nogps":r.ok?"ok":"far";state.verified=r.ok;renderSheet();},1200);
+}
+function pick(a){if(!gate())return;state.action=a;renderSheet();}
+function photoBlock(slot,label){
+  return `<div class="mb-3"><div class="flex justify-between items-center mb-2"><span class="text-sm font-semibold text-slate-700">${label}</span>
+    <button onclick="openCam('${slot}')" class="text-xs px-3 py-2 rounded-xl bg-slate-800 text-white"><i class="fa-solid fa-camera mr-1"></i>Capture</button></div>
+    <div class="flex gap-2 flex-wrap min-h-[64px] bg-slate-50 rounded-xl p-2 border border-dashed border-slate-300">
+    ${state.photos[slot].map(p=>`<img src="${p}" alt="" class="w-16 h-16 object-cover rounded-lg shadow">`).join("")||'<span class="text-xs text-slate-400 m-auto">No photos yet · camera only</span>'}
+    </div></div>`;
+}
+function formHtml(){
+  const m=state.action==="Maintenance";
+  return `<div class="fade">
+    <div class="flex items-center justify-between mb-3"><span class="px-3 py-1 rounded-full text-xs font-bold ${m?'bg-amber-100 text-amber-700':'bg-blue-100 text-blue-700'}">${state.action}</span>
+      <button onclick="state.action=null;renderSheet()" class="text-xs text-slate-500 underline">Change</button></div>
+    <label class="text-sm font-semibold text-slate-700">Inspector Name</label>
+    <input type="text" value="${esc(state.name)}" oninput="state.name=this.value" placeholder="Enter full name" class="w-full mt-1 mb-3 px-4 py-3 rounded-xl border border-slate-200 bg-slate-50">
+    ${photoBlock("before","Before Photos")}${m?photoBlock("after","After Photos"):""}
+    <button onclick="submitForm()" class="w-full py-4 rounded-2xl bg-emerald-600 text-white font-bold shadow-lg mt-1"><i class="fa-solid fa-paper-plane mr-2"></i>Submit ${state.action}</button></div>`;
+}
+function submitForm(){
+  if(!gate())return;
+  if(!state.name.trim()) return toast("Inspector name is required");
+  if(!state.photos.before.length) return toast("Capture at least one Before photo");
+  if(state.action==="Maintenance"&&!state.photos.after.length) return toast("Capture at least one After photo");
+  state.tasks.unshift({id:state.asset.id,type:state.asset.type,action:state.action,name:state.name.trim(),date:new Date().toLocaleString(),thumb:state.photos.before[0],count:state.photos.before.length+state.photos.after.length});
+  state.done.push({id:state.asset.id,type:state.asset.type,action:state.action,date:Date.now()});save();
+  closeSheet();toast("Saved – schedule progress updated");
+}
+
+/* CAMERA & WATERMARK */
+function openCam(slot){
+  if(!gate())return;
+  if(!state.name.trim()) return toast("Enter Inspector Name first");
+  state.slot=slot;$("camTitle").textContent=(slot==="before"?"Before":"After")+" Photo · "+state.asset.id;
+  $("camera").classList.add("open");
+}
+function closeCam(){$("camera").classList.remove("open");}
+function capture(){
+  closeCam();
+  const c=$("canvas"),g=c.getContext("2d"),W=c.width,H=c.height;
+  const sky=g.createLinearGradient(0,0,0,H);sky.addColorStop(0,"#94a3b8");sky.addColorStop(1,"#475569");
+  g.fillStyle=sky;g.fillRect(0,0,W,H);
+  g.fillStyle="#334155";g.fillRect(0,H*.55,W,H*.45);
+  for(let i=0;i<60;i++){g.fillStyle=`rgba(${100+Math.random()*60|0},${100+Math.random()*60|0},${110+Math.random()*60|0},.35)`;g.fillRect(Math.random()*W,H*.55+Math.random()*H*.45,Math.random()*40+6,Math.random()*10+3);}
+  const cx=W/2,cy=H*.62;
+  g.fillStyle="#0f172a";g.beginPath();g.ellipse(cx,cy,150,52,0,0,7);g.fill();
+  g.strokeStyle="#64748b";g.lineWidth=10;g.beginPath();g.ellipse(cx,cy,150,52,0,0,7);g.stroke();
+  g.fillStyle="#1e293b";g.beginPath();g.ellipse(cx,cy,115,38,0,0,7);g.fill();
+  g.strokeStyle="#475569";g.lineWidth=4;
+  for(let i=-3;i<=3;i++){g.beginPath();g.moveTo(cx+i*28,cy-34);g.lineTo(cx+i*28,cy+34);g.stroke();}
+  const lines=[`Asset ID: ${state.asset.id}`,`Date: ${new Date().toLocaleString()}`,`Project: ${PROJECT.name}`,`Project No: ${PROJECT.number}`,`Inspector: ${state.name.trim()}`];
+  const lh=34,ph=lines.length*lh+24;
+  g.fillStyle="rgba(15,23,42,.75)";g.fillRect(0,H-ph,W,ph);
+  g.fillStyle="#38bdf8";g.fillRect(0,H-ph,8,ph);
+  g.font="bold 24px Arial";g.textBaseline="top";g.textAlign="left";g.fillStyle="#fff";
+  lines.forEach((t,i)=>g.fillText(t,24,H-ph+12+i*lh));
+  g.save();g.translate(W/2,H*.28);g.rotate(-0.35);g.font="bold 54px Arial";g.textAlign="center";
+  g.fillStyle="rgba(255,255,255,.2)";g.fillText(state.asset.id+" · "+PROJECT.number,0,0);g.restore();
+  $("preview").classList.add("open");
+}
+function retake(){$("preview").classList.remove("open");openCam(state.slot);}
+function savePhoto(){
+  state.photos[state.slot].push($("canvas").toDataURL("image/jpeg",.85));
+  $("preview").classList.remove("open");renderSheet();toast("Watermarked photo saved");
+}
+
+/* TASKS */
+function renderTasks(){
+  const el=$("taskList");
+  if(!state.tasks.length){el.innerHTML='<div class="md:col-span-2 bg-white rounded-2xl p-8 text-center text-slate-400 shadow"><i class="fa-solid fa-inbox text-4xl mb-3"></i><div class="text-sm">No submissions yet.<br>Select an asset on the map to begin.</div></div>';return;}
+  el.innerHTML=state.tasks.map(t=>`<div class="bg-white rounded-2xl p-3 shadow flex gap-3 fade"><img src="${t.thumb}" alt="" class="w-16 h-16 rounded-xl object-cover">
+    <div class="flex-1 min-w-0"><div class="flex justify-between"><b class="text-sm text-slate-800">${esc(t.id)}</b><span class="text-[10px] px-2 py-0.5 rounded-full font-bold ${t.action==='Maintenance'?'bg-amber-100 text-amber-700':'bg-blue-100 text-blue-700'}">${t.action}</span></div>
+    <div class="text-xs text-slate-500">${esc(t.type)} · ${t.count} photo(s)</div><div class="text-xs text-slate-400 truncate">${esc(t.name)} · ${t.date}</div></div></div>`).join("");
+}
+
+/* SCHEDULE (CSV, local) + PROGRESS */
+function loadSched(text,name){
+  const r=parseSched(text);
+  if(r.error)return toast(r.error);
+  if(!r.tasks.length)return toast("No valid tasks (check name / start / end)");
+  state.sched=text;state.schedName=name;save();renderGantt();renderProgress();
+  toast(`Schedule loaded: ${r.tasks.length} tasks`+(r.bad?` · ${r.bad} skipped`:""));
+}
+function resetSched(){state.sched=SCHED_DEFAULT;state.schedName="Sample schedule";save();renderGantt();renderProgress();}
+function fallbackGantt(ft){
+  const D=s=>new Date(s).getTime(),min=Math.min(...ft.map(t=>D(t.start))),max=Math.max(...ft.map(t=>D(t.end)))+DAY,span=max-min||1,td=Math.max(0,Math.min(100,(todayMs()-min)/span*100));
+  $("ganttHost").innerHTML='<div class="p-4" style="min-width:560px">'+ft.map(t=>{
+    const l=(D(t.start)-min)/span*100,w=Math.max((D(t.end)+DAY-D(t.start))/span*100,2);
+    return `<div class="flex items-center mb-1"><div class="w-44 text-xs text-slate-600 truncate pr-2">${esc(t.name)}</div><div class="relative flex-1 h-8 bg-slate-50 rounded"><div class="gbar" style="left:${l}%;width:${w}%;background:#93c5fd"><div style="width:${t.progress}%;height:100%;background:#1e3a8a;border-radius:6px"></div></div><div style="position:absolute;top:0;bottom:0;left:${td}%;width:2px;background:#ef4444"></div></div></div>`;
+  }).join("")+'</div>';
+}
+function renderGantt(){
+  const r=parseSched(state.sched),M=metrics(r.tasks,state.assets,state.done,todayMs());
+  $("schedInfo").textContent=`${state.schedName} · ${r.tasks.length} tasks · inspection + maintenance linked to field photos · local CSV`;
+  $("modes").innerHTML=["Day","Week","Month"].map(m=>`<button onclick="ganttMode='${m}';renderGantt()" class="px-4 py-2 rounded-full text-xs font-semibold ${m===ganttMode?'bg-blue-800 text-white':'bg-white text-slate-600 shadow'}">${m}</button>`).join("");
+  if(!r.tasks.length){$("ganttHost").innerHTML='<div class="p-6 text-sm text-slate-500">No valid tasks. Download the template and upload a schedule CSV.</div>';return;}
+  const ft=M.tasks.map(t=>({id:t.id,name:t.name+(t.type?` (I ${t.insN}/${t.target} · M ${t.mntN}/${t.target})`:""),start:iso(t.start),end:iso(t.end),progress:Math.round(t.actual),dependencies:t.dep.join(",")}));
+  if(typeof Gantt==="undefined")return fallbackGantt(ft);
+  $("ganttHost").innerHTML='<svg id="gantt"></svg>';
+  try{new Gantt("#gantt",ft,{view_mode:ganttMode,bar_height:26,padding:16});}catch(e){fallbackGantt(ft);}
+}
+function ringInner(v,color,title,sub){
+  const r=42,c=2*Math.PI*r,p=Math.max(0,Math.min(100,v));
+  return `<svg viewBox="0 0 100 100" class="w-24 h-24"><circle cx="50" cy="50" r="${r}" fill="none" stroke="#e2e8f0" stroke-width="10"/><circle cx="50" cy="50" r="${r}" fill="none" stroke="${color}" stroke-width="10" stroke-linecap="round" stroke-dasharray="${c*p/100} ${c}" transform="rotate(-90 50 50)"/><text x="50" y="57" text-anchor="middle" font-size="21" font-weight="700" fill="#0f172a">${p.toFixed(p%1?1:0)}%</text></svg><div class="font-semibold text-sm text-slate-800 mt-1">${title}</div><div class="text-[11px] text-slate-500" dir="rtl">${sub}</div>`;
+}
+function setFin(v,src){
+  v=Math.max(0,Math.min(100,parseFloat(v)||0));state.fin=v;save();
+  if(src!=="r")$("finR").value=v;if(src!=="n")$("finN").value=v;
+  $("ring-fin").innerHTML=ringInner(v,"#d97706","Financial progress","الإنجاز المالي (يدوي)");
+}
+function renderProgress(){
+  const r=parseSched(state.sched),M=metrics(r.tasks,state.assets,state.done,todayMs());
+  const card=(id,v,c,t,s)=>`<div id="ring-${id}" class="bg-white rounded-2xl shadow p-3 flex flex-col items-center text-center">${ringInner(v,c,t,s)}</div>`;
+  $("rings").innerHTML=card("el",M.elapsed,"#475569","Time elapsed","المدة المنقضية")+card("pl",M.planned,"#2563eb","Planned progress","الإنجاز المخطط حتى اليوم")+card("ac",M.actual,"#059669","Actual progress","الإنجاز الفعلي (تلقائي)")+card("fin",state.fin,"#d97706","Financial progress","الإنجاز المالي (يدوي)");
+  const bar=(l,sub,v,c)=>`<div class="bg-white rounded-2xl shadow p-3"><div class="flex justify-between text-sm"><span class="font-semibold text-slate-800">${l}</span><b style="color:${c}">${v==null?"–":v.toFixed(0)+"%"}</b></div><div class="text-[11px] text-slate-500" dir="rtl">${sub}</div><div class="h-2 rounded-full bg-slate-100 mt-2 overflow-hidden"><div class="h-full" style="width:${v||0}%;background:${c}"></div></div></div>`;
+  $("compBars").innerHTML=bar("Inspection progress","نسبة الفحص – الأصول المفحوصة",M.insAll,"#2563eb")+bar("Maintenance progress","نسبة الصيانة – الأصول المصانة",M.mntAll,"#d97706");
+  $("finR").value=state.fin;$("finN").value=state.fin;
+  const gap=M.actual-M.planned,chip=Math.abs(gap)<0.5?'<span class="text-slate-600">On plan</span>':gap>0?`<span class="text-emerald-600">Ahead by ${gap.toFixed(1)} pts</span>`:`<span class="text-rose-600">Behind by ${(-gap).toFixed(1)} pts</span>`;
+  $("progInfo").innerHTML=r.tasks.length?`Today ${iso(todayMs())} · Project ${iso(M.start)} → ${iso(M.end)} · ${chip}`:"No valid schedule loaded – upload one in the Schedule tab.";
+  const line=(l,n,tg,p,sh,c)=>`<div class="flex items-center gap-2 mt-1 text-[11px] text-slate-600"><span class="w-28 shrink-0">${l} ${n}/${tg}</span><div class="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden"><div class="h-full" style="width:${p}%;background:${c}"></div></div><span class="w-16 text-right">${p.toFixed(0)}% · ${(sh*100).toFixed(0)}%w</span></div>`;
+  $("progTasks").innerHTML=M.tasks.map(t=>`<div class="bg-white rounded-2xl shadow p-3"><div class="flex justify-between items-start gap-2"><div class="min-w-0"><div class="text-sm font-semibold text-slate-800 truncate">${esc(t.name)}</div>
+    <div class="text-[11px] text-slate-500">${iso(t.start)} → ${iso(t.end)}${t.type?` · <i class="fa-solid fa-link"></i> ${esc(t.type)}`:` · manual ${t.manual}%`}</div></div>
+    <div class="text-right text-[11px] shrink-0"><div class="text-blue-700">Plan ${t.planned.toFixed(0)}%</div><div class="text-emerald-700 font-semibold">Actual ${t.actual.toFixed(0)}%</div></div></div>
+    ${t.type?line("Inspection",t.insN,t.target,t.insPct,t.ins,"#2563eb")+line("Maintenance",t.mntN,t.target,t.mntPct,t.mnt,"#d97706"):""}
+    <div class="h-1.5 rounded-full bg-slate-100 mt-2 overflow-hidden"><div class="h-full bg-emerald-500" style="width:${t.actual}%"></div></div></div>`).join("");
+}
+
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){impClose();closeCam();$("preview").classList.remove("open");closeSheet();}});
+load();initMap();setAssets(state.assets,true);go("map");gpsChip();startGPS();
+</script>
+</body>
+</html>
